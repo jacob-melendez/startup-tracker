@@ -1,0 +1,43 @@
+# SPEC §3: Docker Compose services `db`, `app`, `scheduler`. Phase 1 defines `db` and `app`;
+# `scheduler` arrives in Phase 6. `make up` is the only setup step.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tracker}
+      POSTGRES_DB: ${POSTGRES_DB:-tracker}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -h forces TCP: on first boot the entrypoint runs a socket-only bootstrap server while it
+      # initialises the volume, and a socket probe would report healthy too early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-tracker} -d ${POSTGRES_DB:-tracker}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # Application image: used for one-off commands now (`make migrate`, later `make seed`/`refresh`)
+  # and for the web server once web/app.py exists (Phase 4 adds its `command`).
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live-reload the source tree; the virtualenv lives in /opt/venv (see Dockerfile) so the
+      # host's .venv never shadows it.
+      - .:/app
+
+volumes:
+  pgdata:

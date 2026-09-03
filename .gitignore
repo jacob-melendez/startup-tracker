@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local configuration
+.env
+.claude/settings.local.json
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/

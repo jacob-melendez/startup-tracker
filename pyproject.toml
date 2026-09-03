@@ -1,0 +1,68 @@
+[project]
+name = "startup-tracker"
+version = "0.1.0"
+description = "Locally-run tracker of Bay Area startups and their open roles (see docs/SPEC.md)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# Phase 1 runtime dependencies only (SPEC §3). Later phases add httpx/tenacity/selectolax
+# (ingestion), FastAPI/Jinja2/uvicorn (web), APScheduler (scheduler), typer (CLI).
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "structlog>=24.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "testcontainers[postgres]>=4.15",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv]
+# Flat application layout (db/, ingest/, web/, cli.py ...) — nothing to build or install;
+# uv only manages the virtualenv and the committed lockfile.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+ignore = [
+    "RUF012", # mutable class attributes — SQLAlchemy declarative uses them by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/versions/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+# SPEC §3: `mypy --strict` on ingest/ and db/. Add "ingest" here in Phase 2 when it exists.
+files = ["db", "migrations/env.py", "settings.py", "logging_config.py", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "error",
+    # Postgres normalizes generated-column expressions, so Alembic cannot compare the tsvector
+    # Computed defaults textually; test_generated_tsvector_columns asserts them directly.
+    "ignore:Computed default on .* cannot be modified:UserWarning:alembic",
+]

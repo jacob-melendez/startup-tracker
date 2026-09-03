@@ -1,0 +1,11 @@
+# Keep the build context small and secrets out of the image (Dockerfile: COPY . .).
+.git
+.venv
+.env
+__pycache__
+*.py[cod]
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.DS_Store
+.claude
