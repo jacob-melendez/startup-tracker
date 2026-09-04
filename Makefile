@@ -20,10 +20,10 @@ down: ## Stop all services (data volume is kept; `docker compose down -v` wipes 
 migrate: ## Apply Alembic migrations to the Compose database
 	$(COMPOSE) run --rm app alembic upgrade head
 
-seed: ## Load config/seed_companies.yaml (cli.py arrives in Phase 3)
+seed: ## Load config/seed_companies.yaml (the seed command arrives in Phase 3)
 	$(COMPOSE) run --rm app python cli.py seed
 
-refresh: ## Run connectors now: all of them, or CONNECTOR=<name> for one (cli.py arrives in Phase 2)
+refresh: ## Run connectors now: all of them, or CONNECTOR=<name> for one (needs CONTACT_EMAIL for sec_edgar)
 	$(COMPOSE) run --rm app python cli.py refresh $(if $(CONNECTOR),--connector $(CONNECTOR),--all)
 
 test: ## Run pytest (disposable Postgres via testcontainers unless TEST_DATABASE_URL is set in env or .env)

@@ -23,10 +23,19 @@ from alembic.config import Config
 from dotenv import dotenv_values
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from testcontainers.community.postgres import PostgresContainer
 
+from db.models import Base
+
 ROOT = Path(__file__).resolve().parent.parent
+FIXTURES = ROOT / "tests" / "fixtures"
 POSTGRES_IMAGE = "postgres:16"  # the same image as docker-compose.yml
 _DISPOSABLE_NAME = re.compile(r"[a-z0-9_]*_test|test")
 
@@ -121,3 +130,34 @@ async def conn(migrated_database: str) -> AsyncIterator[AsyncConnection]:
             yield connection
     finally:
         await engine.dispose()
+
+
+# ------------------------------------------------------------------ per-test database state
+
+
+@pytest.fixture
+async def engine(migrated_database: str) -> AsyncIterator[AsyncEngine]:
+    """An engine on the migrated database with every table emptied first.
+
+    Truncation happens at setup (not teardown) so a failed test leaves its rows behind for
+    inspection and the next test still starts clean. Identities restart so ids are predictable.
+    """
+    engine = create_async_engine(migrated_database)
+    tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
+    async with session_factory() as session:
+        yield session

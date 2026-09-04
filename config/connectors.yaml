@@ -1,0 +1,65 @@
+# SPEC §7.2, §11: per-connector refresh cadence and rate limits. This is the ONLY place a
+# schedule is defined — the scheduler (Phase 6) reads it at startup; nothing in Python has a cron.
+#
+# cadence     five-field cron expression, evaluated in UTC; null = on-demand only.
+# rate_limit  requests_per_second is enforced per host by ingest/http.py;
+#             max_requests_per_host_per_run caps how many pages one host serves in one run
+#             (SPEC §4 Tier 3: 5 pages per domain per run).
+# respect_robots  fetch and honour robots.txt before every request to a host (SPEC §4).
+# options     connector-specific settings, read by the connector (never by the pipeline).
+#
+# Only connectors with an implementation are runnable; the others are listed so the scheduler
+# and docs/SOURCES.md have one place to look. Priority between connectors (SPEC §8) is NOT
+# configured here — it is the fixed ordering in ingest/pipeline.py.
+connectors:
+  sec_edgar:
+    cadence: "0 5 */3 * *"          # every 3 days, 05:00 — Form D filings trickle in
+    rate_limit:
+      requests_per_second: 8        # SEC fair-access policy allows at most 10/s (SPEC §4)
+    respect_robots: true
+    options:
+      backfill_months: 18           # SPEC §14.3: first run looks back 18 months, then incremental
+      overlap_days: 3               # incremental runs re-scan this many days before the last success
+      search_window_days: 30        # one EFTS query window; keeps every window under the 10,000-hit cap
+      exclude_industry_groups:      # Form D industry groups that are not startups (see docs/SOURCES.md)
+        - Pooled Investment Fund
+
+  greenhouse:
+    cadence: "0 6 * * *"            # daily 06:00 — job postings turn over fast
+    rate_limit: {requests_per_second: 2}
+  lever:
+    cadence: "0 6 * * *"
+    rate_limit: {requests_per_second: 2}
+  ashby:
+    cadence: "0 6 * * *"
+    rate_limit: {requests_per_second: 2}
+  workable:
+    cadence: "0 6 * * *"
+    rate_limit: {requests_per_second: 2}
+
+  hn_hiring:
+    cadence: "0 9 2 * *"            # monthly, the 2nd at 09:00 — the thread posts on the 1st
+    rate_limit: {requests_per_second: 5}
+
+  ycombinator:
+    cadence: "0 4 * * 0"            # weekly, Sunday 04:00
+    rate_limit: {requests_per_second: 2}
+
+  funding_rss:
+    cadence: "0 7 * * *"            # daily 07:00 — cheap and time-sensitive
+    rate_limit: {requests_per_second: 1}
+
+  product_hunt:
+    cadence: "0 5 * * 0"            # weekly, Sunday 05:00
+    rate_limit: {requests_per_second: 1}
+
+  company_site:
+    cadence: "0 3 * * 6"            # weekly, Saturday 03:00 (and on demand for new companies)
+    rate_limit:
+      requests_per_second: 0.5      # SPEC §4 Tier 3: at most 1 request per domain per 2 s
+      max_requests_per_host_per_run: 5
+    respect_robots: true
+
+  opencorporates:
+    cadence: null                   # on-demand only — enrichment, not discovery
+    rate_limit: {requests_per_second: 1}

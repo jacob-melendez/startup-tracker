@@ -1,0 +1,419 @@
+{
+ "took": 125,
+ "timed_out": false,
+ "_shards": {
+  "total": 50,
+  "successful": 50,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 6,
+   "relation": "eq"
+  },
+  "max_score": 18.712557,
+  "hits": [
+   {
+    "_index": "edgar_file",
+    "_id": "0002149647-26-000001:primary_doc.xml",
+    "_score": 18.712557,
+    "_source": {
+     "ciks": [
+      "0002149647"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594643"
+     ],
+     "display_names": [
+      "Obsidian Security, Inc.  (CIK 0002149647)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002149647-26-000001",
+     "film_num": [
+      "261291052"
+     ],
+     "biz_locations": [
+      "Palo Alto, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002073579-26-000001:primary_doc.xml",
+    "_score": 18.305561,
+    "_source": {
+     "ciks": [
+      "0002073579"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-549965"
+     ],
+     "display_names": [
+      "KEA Cloud, Inc.  (CIK 0002073579)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-03",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002073579-26-000001",
+     "film_num": [
+      "261231623"
+     ],
+     "biz_locations": [
+      "Palo Alto, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001688486-26-000002:primary_doc.xml",
+    "_score": 16.73546,
+    "_source": {
+     "ciks": [
+      "0001688486"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-581330"
+     ],
+     "display_names": [
+      "Centaur Health Holdings, Inc.  (CIK 0001688486)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-21",
+     "biz_states": [
+      "WI"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0001688486-26-000002",
+     "film_num": [
+      "261303640"
+     ],
+     "biz_locations": [
+      "Middleton, WI"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002147694-26-000002:primary_doc.xml",
+    "_score": 14.893478,
+    "_source": {
+     "ciks": [
+      "0002147694"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594588"
+     ],
+     "display_names": [
+      "QUDARA INC.  (CIK 0002147694)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002147694-26-000002",
+     "film_num": [
+      "261289479"
+     ],
+     "biz_locations": [
+      "Santa Barbara, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002151025-26-000003:primary_doc.xml",
+    "_score": 14.859922,
+    "_source": {
+     "ciks": [
+      "0002151025"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594734"
+     ],
+     "display_names": [
+      "FESTIMO INC  (CIK 0002151025)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-19",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002151025-26-000003",
+     "film_num": [
+      "261294543"
+     ],
+     "biz_locations": [
+      "San Jose, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002055162-26-000001:primary_doc.xml",
+    "_score": 14.815626,
+    "_source": {
+     "ciks": [
+      "0002055162"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594395"
+     ],
+     "display_names": [
+      "Lovable Labs Inc  (CIK 0002055162)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-17",
+     "biz_states": [
+      "DE"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002055162-26-000001",
+     "film_num": [
+      "261284990"
+     ],
+     "biz_locations": [
+      "Dover, DE"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   }
+  ]
+ },
+ "aggregations": {
+  "entity_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "Centaur Health Holdings, Inc.  (CIK 0001688486)",
+     "doc_count": 1
+    },
+    {
+     "key": "FESTIMO INC  (CIK 0002151025)",
+     "doc_count": 1
+    },
+    {
+     "key": "KEA Cloud, Inc.  (CIK 0002073579)",
+     "doc_count": 1
+    },
+    {
+     "key": "Lovable Labs Inc  (CIK 0002055162)",
+     "doc_count": 1
+    },
+    {
+     "key": "Obsidian Security, Inc.  (CIK 0002149647)",
+     "doc_count": 1
+    },
+    {
+     "key": "QUDARA INC.  (CIK 0002147694)",
+     "doc_count": 1
+    }
+   ]
+  },
+  "sic_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": []
+  },
+  "biz_states_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "CA",
+     "doc_count": 4
+    },
+    {
+     "key": "DE",
+     "doc_count": 1
+    },
+    {
+     "key": "WI",
+     "doc_count": 1
+    }
+   ]
+  },
+  "form_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "D",
+     "doc_count": 6
+    }
+   ]
+  }
+ },
+ "query": {
+  "_source": {
+   "exclude": [
+    "doc_text"
+   ]
+  },
+  "query": {
+   "bool": {
+    "must": [
+     {
+      "match_phrase": {
+       "doc_text": "Palo Alto"
+      }
+     }
+    ],
+    "must_not": [
+     {
+      "match_phrase": {
+       "doc_text": "Pooled Investment Fund"
+      }
+     }
+    ],
+    "should": [],
+    "filter": [
+     {
+      "terms": {
+       "root_forms": [
+        "D"
+       ]
+      }
+     },
+     {
+      "range": {
+       "file_date": {
+        "gte": "2026-08-01",
+        "lte": "2026-09-03"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "from": 0,
+  "size": 100,
+  "aggregations": {
+   "form_filter": {
+    "terms": {
+     "field": "root_forms",
+     "size": 30
+    }
+   },
+   "entity_filter": {
+    "terms": {
+     "field": "display_names.raw",
+     "size": 30
+    }
+   },
+   "sic_filter": {
+    "terms": {
+     "field": "sics",
+     "size": 30
+    }
+   },
+   "biz_states_filter": {
+    "terms": {
+     "field": "biz_states",
+     "size": 30
+    }
+   }
+  }
+ }
+}

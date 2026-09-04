@@ -1,0 +1,30 @@
+# SPEC §1, §11, §12 Phase 7: the ONLY place Bay-Area-specific logic may live.
+#
+# Each region is one metro. Connectors that filter by geography (sec_edgar) use the city list;
+# ``Location.metro`` is filled from ``metro`` at ingest time and entity resolution (SPEC §8)
+# scopes name matches to a metro. Phase 7 adds more regions here and nothing else changes.
+#
+# City names are compared case-insensitively after whitespace normalisation.
+regions:
+  - metro: Bay Area
+    state: CA
+    country: US
+    cities:
+      - San Francisco
+      - Palo Alto
+      - Mountain View
+      - Menlo Park
+      - Redwood City
+      - Santa Clara
+      - Sunnyvale
+      - San Mateo
+      - San Jose
+      - Berkeley
+      - Oakland
+      - Cupertino
+      - Los Altos
+      - Foster City
+      - South San Francisco
+      - Burlingame
+      - Fremont
+      - Emeryville

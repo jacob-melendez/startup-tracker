@@ -34,7 +34,17 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
         formatter_processors.append(structlog.processors.format_exc_info)
         renderer = structlog.processors.JSONRenderer()
     else:
-        renderer = structlog.dev.ConsoleRenderer()
+        # Plain Python tracebacks, not Rich's. ConsoleRenderer defaults to
+        # RichTracebackFormatter(show_locals=True) whenever ``rich`` is importable, which turns
+        # one ``log.exception`` into a boxed panel per frame with a locals table — a refused
+        # database connection rendered ~1,200 lines of stderr, burying the message, and the
+        # ingest pipeline logs one exception per failed record (SPEC §7.2).
+        # Colours only when stderr is a terminal: piped or redirected logs stay free of ANSI
+        # escapes, so `make refresh 2> run.log` and `grep` see plain key=value text.
+        renderer = structlog.dev.ConsoleRenderer(
+            colors=sys.stderr.isatty(),
+            exception_formatter=structlog.dev.plain_traceback,
+        )
     formatter_processors.append(renderer)
 
     structlog.configure(

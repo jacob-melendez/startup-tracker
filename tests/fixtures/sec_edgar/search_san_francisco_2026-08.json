@@ -1,0 +1,3136 @@
+{
+ "took": 218,
+ "timed_out": false,
+ "_shards": {
+  "total": 50,
+  "successful": 50,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 65,
+   "relation": "eq"
+  },
+  "max_score": 12.98557,
+  "hits": [
+   {
+    "_index": "edgar_file",
+    "_id": "0001587468-26-000001:primary_doc.xml",
+    "_score": 12.98557,
+    "_source": {
+     "ciks": [
+      "0001587468"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595676"
+     ],
+     "display_names": [
+      "Databricks, Inc.  (CIK 0001587468)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001587468-26-000001",
+     "film_num": [
+      "261331443"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001587468-26-000002:primary_doc.xml",
+    "_score": 12.929508,
+    "_source": {
+     "ciks": [
+      "0001587468"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595680"
+     ],
+     "display_names": [
+      "Databricks, Inc.  (CIK 0001587468)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001587468-26-000002",
+     "film_num": [
+      "261331530"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06C"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002078105-26-000002:primary_doc.xml",
+    "_score": 12.818556,
+    "_source": {
+     "ciks": [
+      "0002078105"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-554214"
+     ],
+     "display_names": [
+      "Stockbridge Niche Industrial REIT  (CIK 0002078105)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-07",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002078105-26-000002",
+     "film_num": [
+      "261252559"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "MD"
+     ],
+     "items": [
+      "06B",
+      "3C",
+      "3C.5",
+      "3C.6"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001231919-26-000877:primary_doc.xml",
+    "_score": 12.792442,
+    "_source": {
+     "ciks": [
+      "0002046595"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594194"
+     ],
+     "display_names": [
+      "Teal Health, Inc.  (CIK 0002046595)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-13",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001231919-26-000877",
+     "film_num": [
+      "261273221"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002137708-26-000004:primary_doc.xml",
+    "_score": 12.777698,
+    "_source": {
+     "ciks": [
+      "0002137708"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595097"
+     ],
+     "display_names": [
+      "Generalist AI, Inc.  (CIK 0002137708)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-24",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002137708-26-000004",
+     "film_num": [
+      "261307025"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002151604-26-000001:primary_doc.xml",
+    "_score": 12.772574,
+    "_source": {
+     "ciks": [
+      "0002151604"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595347"
+     ],
+     "display_names": [
+      "Epicrispr Biotechnologies, Inc.  (CIK 0002151604)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-26",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002151604-26-000001",
+     "film_num": [
+      "261317092"
+     ],
+     "biz_locations": [
+      "South San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001998609-26-000001:primary_doc.xml",
+    "_score": 12.693111,
+    "_source": {
+     "ciks": [
+      "0001998609"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595402"
+     ],
+     "display_names": [
+      "KidzToPros, Inc.  (CIK 0001998609)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-26",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001998609-26-000001",
+     "film_num": [
+      "261317663"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002147106-26-000001:primary_doc.xml",
+    "_score": 12.67821,
+    "_source": {
+     "ciks": [
+      "0002147106"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594662"
+     ],
+     "display_names": [
+      "49 Mile Ventures LLC  (CIK 0002147106)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-19",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002147106-26-000001",
+     "film_num": [
+      "261292264"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001844768-26-000001:primary_doc.xml",
+    "_score": 12.66572,
+    "_source": {
+     "ciks": [
+      "0001844768"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594655"
+     ],
+     "display_names": [
+      "Whatnot Inc.  (CIK 0001844768)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001844768-26-000001",
+     "film_num": [
+      "261291691"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001929303-26-000001:primary_doc.xml",
+    "_score": 12.6252575,
+    "_source": {
+     "ciks": [
+      "0001929303"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595961"
+     ],
+     "display_names": [
+      "Tabnam, Inc.  (CIK 0001929303)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-31",
+     "biz_states": [
+      "GA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001929303-26-000001",
+     "film_num": [
+      "261345989"
+     ],
+     "biz_locations": [
+      "Atlanta, GA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002123886-26-000004:primary_doc.xml",
+    "_score": 12.591461,
+    "_source": {
+     "ciks": [
+      "0002123886"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593335"
+     ],
+     "display_names": [
+      "Mariana Minerals Co.  (CIK 0002123886)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-06",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002123886-26-000004",
+     "film_num": [
+      "261247907"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001999360-26-000003:primary_doc.xml",
+    "_score": 12.561887,
+    "_source": {
+     "ciks": [
+      "0001999360"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594183"
+     ],
+     "display_names": [
+      "Long Bridge Medical, Inc.  (CIK 0001999360)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-13",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001999360-26-000003",
+     "film_num": [
+      "261272849"
+     ],
+     "biz_locations": [
+      "South San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001755359-26-000004:primary_doc.xml",
+    "_score": 12.549149,
+    "_source": {
+     "ciks": [
+      "0001755359"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594905"
+     ],
+     "display_names": [
+      "Standard Cognition, Corp.  (CIK 0001755359)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-20",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001755359-26-000004",
+     "film_num": [
+      "261298901"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002074564-26-000004:primary_doc.xml",
+    "_score": 12.504514,
+    "_source": {
+     "ciks": [
+      "0002074564"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595077"
+     ],
+     "display_names": [
+      "CORGI INSURANCE SERVICES, INC.  (CIK 0002074564)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-24",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002074564-26-000004",
+     "film_num": [
+      "261305903"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002145311-26-000001:primary_doc.xml",
+    "_score": 12.391908,
+    "_source": {
+     "ciks": [
+      "0002145311"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593607"
+     ],
+     "display_names": [
+      "Coverbase Inc.  (CIK 0002145311)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-10",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002145311-26-000001",
+     "film_num": [
+      "261257274"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150101-26-000001:primary_doc.xml",
+    "_score": 12.383271,
+    "_source": {
+     "ciks": [
+      "0002150101"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594491"
+     ],
+     "display_names": [
+      "Aerdos Labs, Inc.  (CIK 0002150101)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150101-26-000001",
+     "film_num": [
+      "261287819"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002149343-26-000001:primary_doc.xml",
+    "_score": 12.382522,
+    "_source": {
+     "ciks": [
+      "0002149343"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593430"
+     ],
+     "display_names": [
+      "Yosemite Industrial MM, LLC  (CIK 0002149343)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-07",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002149343-26-000001",
+     "film_num": [
+      "261250863"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002014393-26-000004:primary_doc.xml",
+    "_score": 12.372054,
+    "_source": {
+     "ciks": [
+      "0002014393"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594370"
+     ],
+     "display_names": [
+      "CodeRabbit Inc.  (CIK 0002014393)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-14",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002014393-26-000004",
+     "film_num": [
+      "261283716"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152408-26-000001:primary_doc.xml",
+    "_score": 12.356532,
+    "_source": {
+     "ciks": [
+      "0002152408"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-596171"
+     ],
+     "display_names": [
+      "Sylvan Labs, Inc.  (CIK 0002152408)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-09-02",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152408-26-000001",
+     "film_num": [
+      "261353105"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002149225-26-000001:primary_doc.xml",
+    "_score": 12.344797,
+    "_source": {
+     "ciks": [
+      "0002149225"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593452"
+     ],
+     "display_names": [
+      "Truckee Hilltop Holdings, LLC  (CIK 0002149225)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-07",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002149225-26-000001",
+     "film_num": [
+      "261251636"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "CA"
+     ],
+     "items": [
+      "06C"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001926833-26-000002:primary_doc.xml",
+    "_score": 12.334949,
+    "_source": {
+     "ciks": [
+      "0001926833"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595307"
+     ],
+     "display_names": [
+      "Serif Health Management, Inc.  (CIK 0001926833)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-25",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001926833-26-000002",
+     "film_num": [
+      "261315058"
+     ],
+     "biz_locations": [
+      "Los Angeles, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001818357-26-000002:primary_doc.xml",
+    "_score": 12.334594,
+    "_source": {
+     "ciks": [
+      "0001818357"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595320"
+     ],
+     "display_names": [
+      "Quaestor Technologies, Inc.  (CIK 0001818357)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-25",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001818357-26-000002",
+     "film_num": [
+      "261315499"
+     ],
+     "biz_locations": [
+      "Los Altos, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148343-26-000002:primary_doc.xml",
+    "_score": 12.332064,
+    "_source": {
+     "ciks": [
+      "0002148343"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594793"
+     ],
+     "display_names": [
+      "Latitude Health, Inc.  (CIK 0002148343)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-20",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148343-26-000002",
+     "film_num": [
+      "261296624"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148343-26-000003:primary_doc.xml",
+    "_score": 12.328509,
+    "_source": {
+     "ciks": [
+      "0002148343"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594794"
+     ],
+     "display_names": [
+      "Latitude Health, Inc.  (CIK 0002148343)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-20",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148343-26-000003",
+     "film_num": [
+      "261296628"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148343-26-000001:primary_doc.xml",
+    "_score": 12.323422,
+    "_source": {
+     "ciks": [
+      "0002148343"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593527"
+     ],
+     "display_names": [
+      "Latitude Health, Inc.  (CIK 0002148343)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-07",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148343-26-000001",
+     "film_num": [
+      "261253724"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148513-26-000001:primary_doc.xml",
+    "_score": 12.318968,
+    "_source": {
+     "ciks": [
+      "0002148513"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593680"
+     ],
+     "display_names": [
+      "Vitalis AI Inc.  (CIK 0002148513)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-10",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148513-26-000001",
+     "film_num": [
+      "261259013"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150111-26-000001:primary_doc.xml",
+    "_score": 12.3155155,
+    "_source": {
+     "ciks": [
+      "0002150111"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594224"
+     ],
+     "display_names": [
+      "Superset Inc.  (CIK 0002150111)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-14",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150111-26-000001",
+     "film_num": [
+      "261275576"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001062993-26-004435:primary_doc.xml",
+    "_score": 12.313808,
+    "_source": {
+     "ciks": [
+      "0002150148"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594365"
+     ],
+     "display_names": [
+      "California Perovskite Technology Inc.  (CIK 0002150148)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-14",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001062993-26-004435",
+     "film_num": [
+      "261283555"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B",
+      "4A5"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001963942-26-000003:primary_doc.xml",
+    "_score": 12.1052685,
+    "_source": {
+     "ciks": [
+      "0001963942"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594727"
+     ],
+     "display_names": [
+      "Fareon, Inc.  (CIK 0001963942)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-19",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001963942-26-000003",
+     "film_num": [
+      "261294417"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001823988-26-000002:primary_doc.xml",
+    "_score": 12.083804,
+    "_source": {
+     "ciks": [
+      "0001823988"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593193"
+     ],
+     "display_names": [
+      "Propy, Inc.  (CIK 0001823988)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-05",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001823988-26-000002",
+     "film_num": [
+      "261242109"
+     ],
+     "biz_locations": [
+      "Atherton, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001231919-26-000862:primary_doc.xml",
+    "_score": 12.06861,
+    "_source": {
+     "ciks": [
+      "0002147715"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593939"
+     ],
+     "display_names": [
+      "Semaphore Technologies Inc.  (CIK 0002147715)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-12",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0001231919-26-000862",
+     "film_num": [
+      "261267020"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002151596-26-000001:primary_doc.xml",
+    "_score": 12.065779,
+    "_source": {
+     "ciks": [
+      "0002151596"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-596155"
+     ],
+     "display_names": [
+      "Krina AI, Inc.  (CIK 0002151596)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-09-02",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002151596-26-000001",
+     "film_num": [
+      "261352877"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152956-26-000001:primary_doc.xml",
+    "_score": 12.055901,
+    "_source": {
+     "ciks": [
+      "0002152956"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-596140"
+     ],
+     "display_names": [
+      "MB San Leandro LLC  (CIK 0002152956)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-09-02",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152956-26-000001",
+     "film_num": [
+      "261352499"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "CA"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002139601-26-000002:primary_doc.xml",
+    "_score": 12.055355,
+    "_source": {
+     "ciks": [
+      "0002139601"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593951"
+     ],
+     "display_names": [
+      "Contor, Inc.  (CIK 0002139601)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-13",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002139601-26-000002",
+     "film_num": [
+      "261269512"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150951-26-000001:primary_doc.xml",
+    "_score": 12.054315,
+    "_source": {
+     "ciks": [
+      "0002150951"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595858"
+     ],
+     "display_names": [
+      "Torus Intelligence Inc.  (CIK 0002150951)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-31",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150951-26-000001",
+     "film_num": [
+      "261341834"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148212-26-000001:primary_doc.xml",
+    "_score": 12.0501795,
+    "_source": {
+     "ciks": [
+      "0002148212"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594751"
+     ],
+     "display_names": [
+      "LONE PALM LABS, INC.  (CIK 0002148212)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-19",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148212-26-000001",
+     "film_num": [
+      "261294979"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002149232-26-000002:primary_doc.xml",
+    "_score": 12.045043,
+    "_source": {
+     "ciks": [
+      "0002149232"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593691"
+     ],
+     "display_names": [
+      "Reliable Intelligence Inc.  (CIK 0002149232)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-10",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002149232-26-000002",
+     "film_num": [
+      "261259371"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150700-26-000001:primary_doc.xml",
+    "_score": 12.043043,
+    "_source": {
+     "ciks": [
+      "0002150700"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595443"
+     ],
+     "display_names": [
+      "Super Nice Corp  (CIK 0002150700)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-26",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150700-26-000001",
+     "film_num": [
+      "261320520"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152097-26-000001:primary_doc.xml",
+    "_score": 11.560319,
+    "_source": {
+     "ciks": [
+      "0002152097"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595520"
+     ],
+     "display_names": [
+      "Square Pie Guys, LLC  (CIK 0002152097)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152097-26-000001",
+     "film_num": [
+      "261324422"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152314-26-000001:primary_doc.xml",
+    "_score": 11.559643,
+    "_source": {
+     "ciks": [
+      "0002152314"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595576"
+     ],
+     "display_names": [
+      "Forecast Bio, Inc.  (CIK 0002152314)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152314-26-000001",
+     "film_num": [
+      "261327627"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152783-26-000001:primary_doc.xml",
+    "_score": 11.5446615,
+    "_source": {
+     "ciks": [
+      "0002152783"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-596218"
+     ],
+     "display_names": [
+      "Gasentec Holdings, Inc.  (CIK 0002152783)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-09-02",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152783-26-000001",
+     "film_num": [
+      "261354079"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002139601-26-000001:primary_doc.xml",
+    "_score": 11.53165,
+    "_source": {
+     "ciks": [
+      "0002139601"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593951"
+     ],
+     "display_names": [
+      "Contor, Inc.  (CIK 0002139601)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-12",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002139601-26-000001",
+     "film_num": [
+      "261267211"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002145993-26-000001:primary_doc.xml",
+    "_score": 11.527889,
+    "_source": {
+     "ciks": [
+      "0002145993"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594716"
+     ],
+     "display_names": [
+      "Velio Partners LLC  (CIK 0002145993)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-19",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002145993-26-000001",
+     "film_num": [
+      "261294087"
+     ],
+     "biz_locations": [
+      "San Francsico, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002149947-26-000001:primary_doc.xml",
+    "_score": 11.527636,
+    "_source": {
+     "ciks": [
+      "0002149947"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593879"
+     ],
+     "display_names": [
+      "HeyHuddl, Inc.  (CIK 0002149947)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-12",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002149947-26-000001",
+     "film_num": [
+      "261264991"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002134718-26-000071:primary_doc.xml",
+    "_score": 11.523485,
+    "_source": {
+     "ciks": [
+      "0002151158"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594886"
+     ],
+     "display_names": [
+      "Aevos AI Inc.  (CIK 0002151158)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-20",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002134718-26-000071",
+     "film_num": [
+      "261298489"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152053-26-000002:primary_doc.xml",
+    "_score": 11.507278,
+    "_source": {
+     "ciks": [
+      "0002152053"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595718"
+     ],
+     "display_names": [
+      "APOLLO AI LAB, CO.  (CIK 0002152053)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-28",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002152053-26-000002",
+     "film_num": [
+      "261332352"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "CA"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002134718-26-000074:primary_doc.xml",
+    "_score": 11.505435,
+    "_source": {
+     "ciks": [
+      "0002152203"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595552"
+     ],
+     "display_names": [
+      "BottomHalf Labs, Inc.  (CIK 0002152203)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002134718-26-000074",
+     "film_num": [
+      "261324820"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148498-26-000001:primary_doc.xml",
+    "_score": 11.504748,
+    "_source": {
+     "ciks": [
+      "0002148498"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-596067"
+     ],
+     "display_names": [
+      "Beltic, Inc.  (CIK 0002148498)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-09-01",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148498-26-000001",
+     "film_num": [
+      "261349367"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002146511-26-000003:primary_doc.xml",
+    "_score": 11.502093,
+    "_source": {
+     "ciks": [
+      "0002146511"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594507"
+     ],
+     "display_names": [
+      "Scaler AI Labs Inc.  (CIK 0002146511)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002146511-26-000003",
+     "film_num": [
+      "261288113"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002082888-26-000002:primary_doc.xml",
+    "_score": 11.497571,
+    "_source": {
+     "ciks": [
+      "0002082888"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-576770"
+     ],
+     "display_names": [
+      "Vireo Kintsu LLC  (CIK 0002082888)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-26",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002082888-26-000002",
+     "film_num": [
+      "261321599"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148450-26-000001:primary_doc.xml",
+    "_score": 11.496523,
+    "_source": {
+     "ciks": [
+      "0002148450"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-592967"
+     ],
+     "display_names": [
+      "OdysseyPBC, Inc.  (CIK 0002148450)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-03",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148450-26-000001",
+     "film_num": [
+      "261232882"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148534-26-000001:primary_doc.xml",
+    "_score": 11.48887,
+    "_source": {
+     "ciks": [
+      "0002148534"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-593767"
+     ],
+     "display_names": [
+      "Kikitora, Inc.  (CIK 0002148534)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-11",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148534-26-000001",
+     "film_num": [
+      "261261078"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002152053-26-000003:primary_doc.xml",
+    "_score": 11.4750805,
+    "_source": {
+     "ciks": [
+      "0002152053"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595718"
+     ],
+     "display_names": [
+      "APOLLO AI LAB, CO.  (CIK 0002152053)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-28",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002152053-26-000003",
+     "film_num": [
+      "261332356"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "CA"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002146998-26-000001:primary_doc.xml",
+    "_score": 10.189042,
+    "_source": {
+     "ciks": [
+      "0002146998"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-592906"
+     ],
+     "display_names": [
+      "AppWizzy, Inc.  (CIK 0002146998)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-03",
+     "biz_states": [
+      "DE"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002146998-26-000001",
+     "film_num": [
+      "261230805"
+     ],
+     "biz_locations": [
+      "Wilmington, DE"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002148471-26-000001:primary_doc.xml",
+    "_score": 10.167709,
+    "_source": {
+     "ciks": [
+      "0002148471"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-592891"
+     ],
+     "display_names": [
+      "Kinesthetic Inc.  (CIK 0002148471)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-03",
+     "biz_states": [
+      "DE"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002148471-26-000001",
+     "film_num": [
+      "261229926"
+     ],
+     "biz_locations": [
+      "Wilmington, DE"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001867150-26-000002:primary_doc.xml",
+    "_score": 10.147364,
+    "_source": {
+     "ciks": [
+      "0001867150"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-565500"
+     ],
+     "display_names": [
+      "639 LLC  (CIK 0001867150)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "DE"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0001867150-26-000002",
+     "film_num": [
+      "261289614"
+     ],
+     "biz_locations": [
+      "Claymont, DE"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002078906-26-000001:primary_doc.xml",
+    "_score": 10.12558,
+    "_source": {
+     "ciks": [
+      "0002078906"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-556532"
+     ],
+     "display_names": [
+      "Phoenix Fund XI Feeder, L.P.  (CIK 0002078906)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-20",
+     "biz_states": [
+      "TX"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002078906-26-000001",
+     "film_num": [
+      "261298093"
+     ],
+     "biz_locations": [
+      "Addison, TX"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B",
+      "3C",
+      "3C.5"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150600-26-000001:primary_doc.xml",
+    "_score": 10.097065,
+    "_source": {
+     "ciks": [
+      "0002150600"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595978"
+     ],
+     "display_names": [
+      "StrataBio Inc.  (CIK 0002150600)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-31",
+     "biz_states": [
+      "WY"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150600-26-000001",
+     "film_num": [
+      "261346862"
+     ],
+     "biz_locations": [
+      "Sheridan, WY"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "WY"
+     ],
+     "items": [
+      "06C"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001045610-26-000001:primary_doc.xml",
+    "_score": 10.093407,
+    "_source": {
+     "ciks": [
+      "0001045610"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-224347"
+     ],
+     "display_names": [
+      "Prologis, L.P.  (CIK 0001045610)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [
+      "6500"
+     ],
+     "form": "D/A",
+     "adsh": "0001045610-26-000001",
+     "film_num": [
+      "261289277"
+     ],
+     "biz_locations": [
+      "San Francisco, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002088737-26-000001:primary_doc.xml",
+    "_score": 10.075301,
+    "_source": {
+     "ciks": [
+      "0002088737"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-562282"
+     ],
+     "display_names": [
+      "Locunity Inc  (CIK 0002088737)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-14",
+     "biz_states": [
+      "CA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002088737-26-000001",
+     "film_num": [
+      "261278994"
+     ],
+     "biz_locations": [
+      "Martinez, CA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0001642006-26-000001:primary_doc.xml",
+    "_score": 10.0598135,
+    "_source": {
+     "ciks": [
+      "0001642006"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-563753"
+     ],
+     "display_names": [
+      "Notarize, Inc.  (CIK 0001642006)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-17",
+     "biz_states": [
+      "MA"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0001642006-26-000001",
+     "film_num": [
+      "261284301"
+     ],
+     "biz_locations": [
+      "Boston, MA"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "X1"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002150594-26-000001:primary_doc.xml",
+    "_score": 10.032772,
+    "_source": {
+     "ciks": [
+      "0002150594"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594418"
+     ],
+     "display_names": [
+      "EnduraFAST Inc.  (CIK 0002150594)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-17",
+     "biz_states": [
+      "WY"
+     ],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002150594-26-000001",
+     "film_num": [
+      "261285666"
+     ],
+     "biz_locations": [
+      "Sheridan, WY"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "WY"
+     ],
+     "items": [
+      "06C"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0000912282-26-001123:primary_doc.xml",
+    "_score": 10.016772,
+    "_source": {
+     "ciks": [
+      "0001916630"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-594653"
+     ],
+     "display_names": [
+      "Andira Medicine Inc.  (CIK 0001916630)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-18",
+     "biz_states": [],
+     "sics": [],
+     "form": "D",
+     "adsh": "0000912282-26-001123",
+     "film_num": [
+      "261291463"
+     ],
+     "biz_locations": [
+      "North Vancouver"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "A1"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002069519-26-000002:primary_doc.xml",
+    "_score": 9.966789,
+    "_source": {
+     "ciks": [
+      "0002069519"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-595867"
+     ],
+     "display_names": [
+      "Conavi Medical Corp.  (CIK 0002069519)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-31",
+     "biz_states": [],
+     "sics": [],
+     "form": "D",
+     "adsh": "0002069519-26-000002",
+     "film_num": [
+      "261342007"
+     ],
+     "biz_locations": [
+      "Toronto"
+     ],
+     "file_type": "D",
+     "file_description": null,
+     "inc_states": [
+      "A6"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   },
+   {
+    "_index": "edgar_file",
+    "_id": "0002075343-26-000001:primary_doc.xml",
+    "_score": 9.925583,
+    "_source": {
+     "ciks": [
+      "0002075343"
+     ],
+     "period_ending": null,
+     "file_num": [
+      "021-556329"
+     ],
+     "display_names": [
+      "EB Intermediate, LP  (CIK 0002075343)"
+     ],
+     "xsl": "xslFormDX01",
+     "schema_version": "X0708",
+     "sequence": 1,
+     "root_forms": [
+      "D"
+     ],
+     "file_date": "2026-08-27",
+     "biz_states": [
+      "FL"
+     ],
+     "sics": [],
+     "form": "D/A",
+     "adsh": "0002075343-26-000001",
+     "film_num": [
+      "261327850"
+     ],
+     "biz_locations": [
+      "Tampa, FL"
+     ],
+     "file_type": "D/A",
+     "file_description": null,
+     "inc_states": [
+      "DE"
+     ],
+     "items": [
+      "06B"
+     ]
+    }
+   }
+  ]
+ },
+ "aggregations": {
+  "entity_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 30,
+   "buckets": [
+    {
+     "key": "Latitude Health, Inc.  (CIK 0002148343)",
+     "doc_count": 3
+    },
+    {
+     "key": "APOLLO AI LAB, CO.  (CIK 0002152053)",
+     "doc_count": 2
+    },
+    {
+     "key": "Contor, Inc.  (CIK 0002139601)",
+     "doc_count": 2
+    },
+    {
+     "key": "Databricks, Inc.  (CIK 0001587468)",
+     "doc_count": 2
+    },
+    {
+     "key": "49 Mile Ventures LLC  (CIK 0002147106)",
+     "doc_count": 1
+    },
+    {
+     "key": "639 LLC  (CIK 0001867150)",
+     "doc_count": 1
+    },
+    {
+     "key": "Aerdos Labs, Inc.  (CIK 0002150101)",
+     "doc_count": 1
+    },
+    {
+     "key": "Aevos AI Inc.  (CIK 0002151158)",
+     "doc_count": 1
+    },
+    {
+     "key": "Andira Medicine Inc.  (CIK 0001916630)",
+     "doc_count": 1
+    },
+    {
+     "key": "AppWizzy, Inc.  (CIK 0002146998)",
+     "doc_count": 1
+    },
+    {
+     "key": "Beltic, Inc.  (CIK 0002148498)",
+     "doc_count": 1
+    },
+    {
+     "key": "BottomHalf Labs, Inc.  (CIK 0002152203)",
+     "doc_count": 1
+    },
+    {
+     "key": "CORGI INSURANCE SERVICES, INC.  (CIK 0002074564)",
+     "doc_count": 1
+    },
+    {
+     "key": "California Perovskite Technology Inc.  (CIK 0002150148)",
+     "doc_count": 1
+    },
+    {
+     "key": "CodeRabbit Inc.  (CIK 0002014393)",
+     "doc_count": 1
+    },
+    {
+     "key": "Conavi Medical Corp.  (CIK 0002069519)",
+     "doc_count": 1
+    },
+    {
+     "key": "Coverbase Inc.  (CIK 0002145311)",
+     "doc_count": 1
+    },
+    {
+     "key": "EB Intermediate, LP  (CIK 0002075343)",
+     "doc_count": 1
+    },
+    {
+     "key": "EnduraFAST Inc.  (CIK 0002150594)",
+     "doc_count": 1
+    },
+    {
+     "key": "Epicrispr Biotechnologies, Inc.  (CIK 0002151604)",
+     "doc_count": 1
+    },
+    {
+     "key": "Fareon, Inc.  (CIK 0001963942)",
+     "doc_count": 1
+    },
+    {
+     "key": "Forecast Bio, Inc.  (CIK 0002152314)",
+     "doc_count": 1
+    },
+    {
+     "key": "Gasentec Holdings, Inc.  (CIK 0002152783)",
+     "doc_count": 1
+    },
+    {
+     "key": "Generalist AI, Inc.  (CIK 0002137708)",
+     "doc_count": 1
+    },
+    {
+     "key": "HeyHuddl, Inc.  (CIK 0002149947)",
+     "doc_count": 1
+    },
+    {
+     "key": "KidzToPros, Inc.  (CIK 0001998609)",
+     "doc_count": 1
+    },
+    {
+     "key": "Kikitora, Inc.  (CIK 0002148534)",
+     "doc_count": 1
+    },
+    {
+     "key": "Kinesthetic Inc.  (CIK 0002148471)",
+     "doc_count": 1
+    },
+    {
+     "key": "Krina AI, Inc.  (CIK 0002151596)",
+     "doc_count": 1
+    },
+    {
+     "key": "LONE PALM LABS, INC.  (CIK 0002148212)",
+     "doc_count": 1
+    }
+   ]
+  },
+  "sic_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "6500",
+     "doc_count": 1
+    }
+   ]
+  },
+  "biz_states_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "CA",
+     "doc_count": 54
+    },
+    {
+     "key": "DE",
+     "doc_count": 3
+    },
+    {
+     "key": "WY",
+     "doc_count": 2
+    },
+    {
+     "key": "FL",
+     "doc_count": 1
+    },
+    {
+     "key": "GA",
+     "doc_count": 1
+    },
+    {
+     "key": "MA",
+     "doc_count": 1
+    },
+    {
+     "key": "TX",
+     "doc_count": 1
+    }
+   ]
+  },
+  "form_filter": {
+   "doc_count_error_upper_bound": 0,
+   "sum_other_doc_count": 0,
+   "buckets": [
+    {
+     "key": "D",
+     "doc_count": 65
+    }
+   ]
+  }
+ },
+ "query": {
+  "_source": {
+   "exclude": [
+    "doc_text"
+   ]
+  },
+  "query": {
+   "bool": {
+    "must": [
+     {
+      "match_phrase": {
+       "doc_text": "San Francisco"
+      }
+     }
+    ],
+    "must_not": [
+     {
+      "match_phrase": {
+       "doc_text": "Pooled Investment Fund"
+      }
+     }
+    ],
+    "should": [],
+    "filter": [
+     {
+      "terms": {
+       "root_forms": [
+        "D"
+       ]
+      }
+     },
+     {
+      "range": {
+       "file_date": {
+        "gte": "2026-08-01",
+        "lte": "2026-09-03"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "from": 0,
+  "size": 100,
+  "aggregations": {
+   "form_filter": {
+    "terms": {
+     "field": "root_forms",
+     "size": 30
+    }
+   },
+   "entity_filter": {
+    "terms": {
+     "field": "display_names.raw",
+     "size": 30
+    }
+   },
+   "sic_filter": {
+    "terms": {
+     "field": "sics",
+     "size": 30
+    }
+   },
+   "biz_states_filter": {
+    "terms": {
+     "field": "biz_states",
+     "size": 30
+    }
+   }
+  }
+ }
+}
