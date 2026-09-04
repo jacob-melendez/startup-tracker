@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:atom="http://www.w3.org/2005/Atom"
+	xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+	xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+	>
+
+<channel>
+	<title>Startups | TechCrunch</title>
+	<atom:link href="https://techcrunch.com/category/startups/feed/" rel="self" type="application/rss+xml" />
+	<link>https://techcrunch.com/category/startups/</link>
+	<description>Startup and Technology News</description>
+	<lastBuildDate>Thu, 03 Sep 2026 21:55:04 +0000</lastBuildDate>
+	<language>en-US</language>
+	<sy:updatePeriod>
+	hourly	</sy:updatePeriod>
+	<sy:updateFrequency>
+	1	</sy:updateFrequency>
+	<generator>https://wordpress.org/?v=6.9.7</generator>
+
+<image>
+	<url>https://techcrunch.com/wp-content/uploads/2015/02/cropped-cropped-favicon-gradient.png?w=32</url>
+	<title>Startups | TechCrunch</title>
+	<link>https://techcrunch.com/category/startups/</link>
+	<width>32</width>
+	<height>32</height>
+</image> 
+	<item>
+		<title>Startup ARR is less secure than ever, new research shows</title>
+		<link>https://techcrunch.com/2026/09/03/startup-arr-is-less-secure-than-ever-new-research-shows/</link>
+		
+		<dc:creator><![CDATA[Julie Bort]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 20:59:23 +0000</pubDate>
+				<category><![CDATA[Enterprise]]></category>
+		<category><![CDATA[Startups]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160602</guid>
+
+					<description><![CDATA[The AI era has completely broken enterprise buying patterns, and startups haven't yet figured out how to navigate.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Accel reportedly in talks to lead $1B round for Thinking Machines at $40B valuation</title>
+		<link>https://techcrunch.com/2026/09/03/accel-reportedly-in-talks-to-lead-1b-round-for-thinking-machines-at-40b-valuation/</link>
+		
+		<dc:creator><![CDATA[Marina Temkin]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 19:36:29 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[Accel]]></category>
+		<category><![CDATA[In Brief]]></category>
+		<category><![CDATA[Mira Murati]]></category>
+		<category><![CDATA[Thinking Machines Lab]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160633</guid>
+
+					<description><![CDATA[The high-profile startup's annual revenue run rate stands at over $100 million.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Utilities are racing to link up with fusion startups, with Realta Fusion the latest to benefit</title>
+		<link>https://techcrunch.com/2026/09/03/utilities-are-racing-to-link-up-with-fusion-startups-with-realta-fusion-the-latest-to-benefit/</link>
+		
+		<dc:creator><![CDATA[Tim De Chant]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 19:29:16 +0000</pubDate>
+				<category><![CDATA[Climate]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[fusion power]]></category>
+		<category><![CDATA[Realta Fusion]]></category>
+		<category><![CDATA[utilities]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160557</guid>
+
+					<description><![CDATA[The grid has been straining under the weight of new AI data centers, and that has utilities courting fusion startups.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Qualcomm backs Ultrahuman in $70M round on bet to turn smart rings into computers</title>
+		<link>https://techcrunch.com/2026/09/03/qualcomm-backs-ultrahuman-in-70m-round-on-bet-to-turn-smart-rings-into-computers/</link>
+		
+		<dc:creator><![CDATA[Jagmeet Singh]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 17:00:00 +0000</pubDate>
+				<category><![CDATA[Biotech & Health]]></category>
+		<category><![CDATA[Hardware]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[blume ventures]]></category>
+		<category><![CDATA[labcorp]]></category>
+		<category><![CDATA[Nexus Venture Partners]]></category>
+		<category><![CDATA[Qualcomm]]></category>
+		<category><![CDATA[Qualcomm Ventures]]></category>
+		<category><![CDATA[smart ring]]></category>
+		<category><![CDATA[ultrahuman]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160409</guid>
+
+					<description><![CDATA[Ultrahuman is targeting a $200 million annual revenue run rate by January 2027 as it builds a new Qualcomm-powered smart ring.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Ollie is betting its focus on privacy can help it win the AI assistant race</title>
+		<link>https://techcrunch.com/2026/09/03/ollie-is-betting-privacy-can-win-the-ai-assistant-race/</link>
+		
+		<dc:creator><![CDATA[Sarah Perez]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 16:09:01 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[AI assistant]]></category>
+		<category><![CDATA[ollie]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160393</guid>
+
+					<description><![CDATA[The family-focused AI assistant wants access to the details of your everyday life, but says it won’t use that data to train AI models or share it with others.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Volunteer at TechCrunch Founder Summit in Boston</title>
+		<link>https://techcrunch.com/2026/09/03/volunteer-at-techcrunch-founder-summit-in-boston/</link>
+		
+		<dc:creator><![CDATA[TechCrunch Events]]></dc:creator>
+		<pubDate>Thu, 03 Sep 2026 13:00:00 +0000</pubDate>
+				<category><![CDATA[TC]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[TechCrunch Founder Summit 2026]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3154440</guid>
+
+					<description><![CDATA[Our rebranded Boston event, TechCrunch Founder Summit (formerly All Stage), is back on November 4th! And we are looking for some incredible volunteers to help us make this event happen. If you are interested in finding out what goes into building tech events, apply to volunteer. If you are selected, not only will you get [&#8230;]]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>The Builders Stage brings practical strategies for scaling startups to TechCrunch Disrupt 2026</title>
+		<link>https://techcrunch.com/2026/09/02/the-builders-stage-brings-practical-strategies-for-scaling-startups-to-techcrunch-disrupt-2026/</link>
+		
+		<dc:creator><![CDATA[TechCrunch Events]]></dc:creator>
+		<pubDate>Wed, 02 Sep 2026 23:01:00 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Biotech & Health]]></category>
+		<category><![CDATA[Climate]]></category>
+		<category><![CDATA[Crypto]]></category>
+		<category><![CDATA[Fintech]]></category>
+		<category><![CDATA[Fundraising]]></category>
+		<category><![CDATA[Media & Entertainment]]></category>
+		<category><![CDATA[Robotics]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[Transportation]]></category>
+		<category><![CDATA[TechCrunch Disrupt]]></category>
+		<category><![CDATA[TechCrunch Disrupt 2026]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3137969</guid>
+
+					<description><![CDATA[The Builders Stage is returning to TechCrunch Disrupt, bringing together founders, startup operators, and investors for practical conversations on what it takes to build and scale.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Palo Alto Networks paid $500M for Thrive-backed Console, sources say</title>
+		<link>https://techcrunch.com/2026/09/02/palo-alto-networks-paid-500m-for-thrive-backed-console-sources-say/</link>
+		
+		<dc:creator><![CDATA[Marina Temkin]]></dc:creator>
+		<pubDate>Wed, 02 Sep 2026 22:44:56 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Enterprise]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[Mergers and Acquisitions]]></category>
+		<category><![CDATA[palo alto networks]]></category>
+		<category><![CDATA[Thrive Capital]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?p=3160290</guid>
+
+					<description><![CDATA[The acquisition also leaves Sequoia-backed Serval as the de facto startup leader in AI IT service automation, industry watchers believe.]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>Pangram&#8217;s Max Spero on why AI detection is harder than &#8216;Real or Fake&#8217;</title>
+		<link>https://techcrunch.com/video/pangrams-max-spero-on-why-ai-detection-is-harder-than-real-or-fake/</link>
+		
+		<dc:creator><![CDATA[Theresa Loconsolo]]></dc:creator>
+		<pubDate>Wed, 02 Sep 2026 17:18:13 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[AI detection]]></category>
+		<category><![CDATA[Equity Video]]></category>
+		<category><![CDATA[Substack]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?post_type=tc_video&#038;p=3160054</guid>
+
+					<description><![CDATA[The internet has a trust problem, and&#160;it’s&#160;not just because social media feeds are filling up with AI&#160;slop. AI-generated text and images are now making their way into job applications, product reviews,&#160;and even insurance claims, leaving platforms and users alike scrambling to figure out&#160;what’s&#160;real.&#160; A handful of startups have cropped up in the past couple of [&#8230;]]]></description>
+		
+		
+		
+			</item>
+
+		<item>
+		<title>We&#8217;re ‘dangerously close’ to dead internet theory, says Pangram&#8217;s CEO</title>
+		<link>https://techcrunch.com/podcast/were-dangerously-close-to-dead-internet-theory-says-pangrams-ceo/</link>
+		
+		<dc:creator><![CDATA[Rebecca Bellan, Theresa Loconsolo]]></dc:creator>
+		<pubDate>Wed, 02 Sep 2026 17:09:57 +0000</pubDate>
+				<category><![CDATA[AI]]></category>
+		<category><![CDATA[Startups]]></category>
+		<category><![CDATA[AI detection]]></category>
+		<category><![CDATA[Equity podcast]]></category>
+		<category><![CDATA[Substack]]></category>
+		<guid isPermaLink="false">https://techcrunch.com/?post_type=tc_podcast&#038;p=3160051</guid>
+
+					<description><![CDATA[The internet has a trust problem, and&#160;it’s&#160;not just because social media feeds are filling up with AI&#160;slop. AI-generated text and images are now making their way into job applications, product reviews,&#160;and even insurance claims, leaving platforms and users alike scrambling to figure out&#160;what’s&#160;real.&#160; A handful of startups have cropped up in the past couple of [&#8230;]]]></description>
+		
+		
+		
+			</item>
+</channel>
+</rss>

@@ -1,9 +1,12 @@
-"""Command-line entry point (SPEC §11 ``cli.py``; SPEC §12 Phase 2 adds ``refresh``).
+"""Command-line entry point (SPEC §11 ``cli.py``).
 
-Phase 2 ships two commands:
+Three commands so far:
 
 * ``migrate`` — ``alembic upgrade head`` through the Alembic API, the same thing ``make migrate``
   runs inside Compose (SPEC §3: Alembic owns all DDL).
+* ``seed`` — load ``config/seed_companies.yaml`` and validate every domain (SPEC §10). The seed
+  loader is a connector like any other (:mod:`ingest.seed`) but is deliberately absent from the
+  registry, so ``refresh --all`` never re-validates the bootstrap list; this command builds it.
 * ``refresh`` — run one connector (``--connector NAME``) or every enabled one (``--all``) right
   now. Together with the Phase 6 scheduler this is the *only* place external data is fetched:
   request handlers never make outbound calls (SPEC §2, CLAUDE.md). Every run writes a
@@ -11,7 +14,7 @@ Phase 2 ships two commands:
   could not be written at all (database unreachable), which the summary line marks with
   :data:`NOT_RECORDED` so stdout never claims a row that does not exist.
 
-``seed`` (Phase 3), ``stats`` and ``merge-review`` (Phase 6) join later.
+``stats`` and ``merge-review`` (Phase 6) join later.
 
 Logging is configured once, in the Typer callback, from :class:`settings.Settings`. Log lines go
 to stderr (see :mod:`logging_config`), so stdout carries only the per-connector summary lines.
@@ -39,6 +42,7 @@ from ingest.config import ConnectorConfig, load_connectors_config, load_regions_
 from ingest.connectors import all_connectors
 from ingest.http import FileCache, HttpClient
 from ingest.pipeline import run_connector
+from ingest.seed import SeedConnector
 from logging_config import configure_logging, get_logger
 from settings import Settings, get_settings
 
@@ -337,6 +341,49 @@ def refresh(
     require_contact_email(settings, names)
     targets = build_connectors(ctx, names)
     statuses = asyncio.run(refresh_all(targets, settings=settings, since=since_at))
+    if enums.FetchRunStatus.ERROR in statuses:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def seed(
+    ctx: typer.Context,
+    skip_validation: Annotated[
+        bool,
+        typer.Option(
+            "--skip-validation",
+            help=(
+                "Do not resolve each domain over the network. SPEC §10 asks for the HEAD "
+                "check; skip it only for an offline first run."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Load config/seed_companies.yaml into the database, validating every domain (SPEC §10).
+
+    Each entry's domain is resolved with a HEAD request that follows redirects; an entry whose
+    host cannot be reached at all, or whose site answers 404/410, is stored with status='dead'
+    and logged rather than failing the run. ATS board tokens are never seeded — the Greenhouse,
+    Lever, Ashby and Workable connectors discover them (SPEC §4, §10).
+
+    The load is a normal connector run, so it writes a fetch_runs row (SPEC §7.2) and prints
+    the same summary line as `refresh`. Re-running is safe: entries are upserted on the
+    normalized domain, and `seed` ranks below every real connector, so nothing it writes can
+    overwrite a value a real source has since reported (SPEC §8). Exit status matches
+    `refresh`.
+    """
+    settings = get_settings()
+    config = connector_config(ctx, SeedConnector.name)
+    if skip_validation:
+        config = config.model_copy(
+            update={"options": {**config.options, "validate_domains": False}}
+        )
+    try:
+        connector = SeedConnector(config, load_regions_config())
+    except (ValueError, OSError) as exc:  # a bad options block or an unreadable YAML file
+        ctx.fail(f"invalid seed configuration: {exc}")
+    log.info("seed", validate_domains=connector.options.validate_domains)
+    statuses = asyncio.run(refresh_all([(connector, config)], settings=settings, since=None))
     if enums.FetchRunStatus.ERROR in statuses:
         raise typer.Exit(code=1)
 

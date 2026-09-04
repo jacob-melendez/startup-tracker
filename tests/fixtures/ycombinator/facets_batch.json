@@ -1,0 +1,19 @@
+{
+ "results": [
+  {
+   "hits": [],
+   "nbHits": 6200,
+   "page": 0,
+   "nbPages": 0,
+   "hitsPerPage": 0,
+   "facets": {
+    "batch": {
+     "Winter 2024": 248,
+     "Summer 2012": 83,
+     "Winter 2007": 13
+    }
+   },
+   "index": "YCCompany_production"
+  }
+ ]
+}

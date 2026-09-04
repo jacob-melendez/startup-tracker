@@ -1,0 +1,113 @@
+# SPEC §10, §14.2: the Bay Area bootstrap set, verbatim from the spec.
+#
+# Why it exists: cold-starting from EDGAR alone is slow, and the ATS connectors have nothing to
+# discover board tokens from until some companies exist. `cli.py seed` loads this file, validates
+# every domain over the network (§10) and upserts the entries through the normal pipeline.
+#
+# This is a bootstrap, not a target. Within a few refresh cycles `sec_edgar` and `ycombinator`
+# contribute far more companies than these 58 (SPEC §10 lists 58 entries; §14.2 rounds it
+# to "55 Bay Area companies").
+#
+# Rules for editing:
+#   * fields: name, domain, city, and an optional `sector` override (the group key is the default
+#     sector hint). `state` defaults to the state of the region that `config/regions.yaml` gives
+#     the city; a city no region knows is an error, so the file can never smuggle in a company
+#     outside the configured metros.
+#   * NEVER hardcode an ATS token here — the discovery step in the Greenhouse/Lever/Ashby/
+#     Workable connectors finds it (SPEC §4, §10, CLAUDE.md).
+#   * `seed` is the lowest-priority connector (SPEC §8), so anything written here is overwritten
+#     by the first real connector that reports the same field. Entries that have since been
+#     acquired or wound down are caught by the domain validation, which marks them `dead` and
+#     logs — it never fails the run (SPEC §10).
+
+companies:
+  ai_and_ml:
+    - {name: OpenAI,             domain: openai.com,        city: San Francisco}
+    - {name: Anthropic,          domain: anthropic.com,     city: San Francisco}
+    - {name: Scale AI,           domain: scale.com,         city: San Francisco}
+    - {name: Perplexity,         domain: perplexity.ai,     city: San Francisco}
+    - {name: Sierra,             domain: sierra.ai,         city: San Francisco}
+    - {name: Harvey,             domain: harvey.ai,         city: San Francisco}
+    - {name: Anysphere (Cursor), domain: cursor.com,        city: San Francisco}
+    - {name: Glean,              domain: glean.com,         city: Palo Alto}
+    - {name: Together AI,        domain: together.ai,       city: San Francisco}
+    - {name: Fireworks AI,       domain: fireworks.ai,      city: Redwood City}
+    - {name: Baseten,            domain: baseten.co,        city: San Francisco}
+    - {name: Modal Labs,         domain: modal.com,         city: San Francisco}
+    - {name: Decagon,            domain: decagon.ai,        city: San Francisco}
+    - {name: Writer,             domain: writer.com,        city: San Francisco}
+
+  dev_tools_and_infra:
+    - {name: Databricks,         domain: databricks.com,    city: San Francisco}
+    - {name: Vercel,             domain: vercel.com,        city: San Francisco}
+    - {name: Sourcegraph,        domain: sourcegraph.com,   city: San Francisco}
+    - {name: Sentry,             domain: sentry.io,         city: San Francisco}
+    - {name: PostHog,            domain: posthog.com,       city: San Francisco}
+    - {name: Warp,               domain: warp.dev,          city: San Francisco}
+    - {name: Replit,             domain: replit.com,        city: Foster City}
+    - {name: Retool,             domain: retool.com,        city: San Francisco}
+    - {name: Linear,             domain: linear.app,        city: San Francisco}
+
+  fintech:
+    - {name: Stripe,             domain: stripe.com,        city: South San Francisco}
+    - {name: Plaid,              domain: plaid.com,         city: San Francisco}
+    - {name: Brex,               domain: brex.com,          city: San Francisco}
+    - {name: Mercury,            domain: mercury.com,       city: San Francisco}
+    - {name: Chime,              domain: chime.com,         city: San Francisco}
+    - {name: Gusto,              domain: gusto.com,         city: San Francisco}
+    - {name: Pave,               domain: pave.com,          city: San Francisco}
+
+  saas_and_work_tools:
+    - {name: Figma,              domain: figma.com,         city: San Francisco}
+    - {name: Notion,             domain: notion.so,         city: San Francisco}
+    - {name: Airtable,           domain: airtable.com,      city: San Francisco}
+    - {name: Rippling,           domain: rippling.com,      city: San Francisco}
+    - {name: Deel,               domain: deel.com,          city: San Francisco}
+    - {name: Ironclad,           domain: ironcladapp.com,   city: San Francisco}
+    - {name: Ashby,              domain: ashbyhq.com,       city: San Francisco}
+
+  security_and_compliance:
+    - {name: Vanta,              domain: vanta.com,         city: San Francisco}
+    - {name: Persona,            domain: withpersona.com,   city: San Francisco}
+    - {name: Checkr,             domain: checkr.com,        city: San Francisco}
+    - {name: Verkada,            domain: verkada.com,       city: San Mateo}
+
+  hardware_semis_robotics:
+    - {name: Cerebras Systems,   domain: cerebras.ai,       city: Sunnyvale}
+    - {name: Groq,               domain: groq.com,          city: Mountain View}
+    - {name: SambaNova Systems,  domain: sambanova.ai,      city: Palo Alto}
+    - {name: Zoox,               domain: zoox.com,          city: Foster City}
+    - {name: Nuro,               domain: nuro.ai,           city: Mountain View}
+    - {name: Skydio,             domain: skydio.com,        city: San Mateo}
+    - {name: Applied Intuition,  domain: appliedintuition.com, city: Mountain View}
+    - {name: Astranis,           domain: astranis.com,      city: San Francisco}
+
+  quantum_and_deep_tech:
+    - {name: PsiQuantum,         domain: psiquantum.com,    city: Palo Alto}
+    - {name: SandboxAQ,          domain: sandboxaq.com,     city: Palo Alto}
+    - {name: Atom Computing,     domain: atom-computing.com, city: Berkeley}
+
+  health:
+    - {name: Hinge Health,       domain: hingehealth.com,   city: San Francisco}
+    - {name: Carbon Health,      domain: carbonhealth.com,  city: San Francisco}
+    - {name: Included Health,    domain: includedhealth.com, city: San Francisco}
+    - {name: Color Health,       domain: color.com,         city: San Francisco}
+
+  climate:
+    - {name: Watershed,          domain: watershed.com,     city: San Francisco}
+    - {name: Twelve,             domain: twelve.co,         city: Berkeley}
+
+# How a group key becomes a `Sector.name`: the key is title-cased with `_and_` read as "&", so
+# `ai_and_ml` -> "AI & ML" and `dev_tools_and_infra` -> "Dev Tools & Infra". Override per entry
+# with `sector: Something Else`. Acronyms that must stay upper case are listed here so the
+# loader has no vocabulary of its own.
+sector_labels:
+  ai_and_ml: AI & ML
+  dev_tools_and_infra: Dev Tools & Infrastructure
+  fintech: Fintech
+  saas_and_work_tools: SaaS & Work Tools
+  security_and_compliance: Security & Compliance
+  hardware_semis_robotics: Hardware, Semis & Robotics
+  quantum_and_deep_tech: Quantum & Deep Tech
+  health: Health
+  climate: Climate

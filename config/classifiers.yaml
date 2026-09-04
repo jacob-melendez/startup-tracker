@@ -1,0 +1,219 @@
+# SPEC §7.1, §11: every keyword rule that classifies a role lives here, editable without a code
+# change. `ingest/classify.py` reads this file and holds no vocabulary of its own (CLAUDE.md).
+#
+# How matching works (ingest/classify.py):
+#   * Each block is an ORDERED list of rules; the FIRST rule with a matching keyword wins, so the
+#     list order *is* the precedence. A value may appear in several rules — that is how a specific
+#     phrase outranks a generic one ("test engineer" is hardware per SPEC §7.1, while a bare
+#     "test" is QA), without any scoring logic to reason about.
+#   * Keywords match case-insensitively on word boundaries, so `ae` matches "AE" but not "Aegis"
+#     and `intern` does not match "internal". A keyword containing a space matches across
+#     whitespace of any length. `+`, `&` and `/` are matched literally.
+#   * The matched keyword is returned and logged on every classification so a false positive can
+#     be traced back to the line that caused it (SPEC §7.1).
+#
+# CLASSIFICATION NEVER EXCLUDES (SPEC §7.1, §13). A title matching no rule is `role_family: other`
+# and `seniority: unknown`; it is still ingested, still stored, and still shown in the default
+# views. `flexible_signal` is a badge and an opt-in filter, never a default filter.
+
+# --------------------------------------------------------------------------- role_family (19)
+# Read from the job title only: a job description mentions every function in the company.
+# Rules are ordered most-specific first. The `other` member is the fallback and has no rules.
+role_family:
+  # Machine learning before software, so "Software Engineer, Machine Learning" is ml_ai.
+  - family: ml_ai
+    any: [machine learning, ml engineer, ml scientist, mlops, ml infrastructure, ml platform,
+          ai engineer, ai scientist, ai researcher, applied scientist, applied ai, llm, nlp,
+          natural language, computer vision, deep learning, generative ai, foundation model,
+          reinforcement learning, speech recognition, recommender]
+  - family: robotics
+    any: [robotics, roboticist, robot, autonomy, autonomous vehicle, motion planning,
+          path planning, controls engineer, control systems, perception engineer, slam,
+          teleoperation, navigation engineer]
+  - family: research
+    any: [research scientist, research engineer, postdoc, post-doc, phd,
+          research associate, research fellow, scientific computing]
+    # A bare "researcher" is claimed lower down, after design: a UX Researcher is design work.
+  - family: security
+    any: [security, appsec, infosec, netsec, application security, product security,
+          compliance engineer, trust and safety, cryptography, cryptographer, privacy engineer,
+          penetration test, red team, grc]
+  # SPEC §7.1 lists "test engineer" under hardware; a bare "test" below is QA.
+  - family: hardware
+    any: [test engineer, hardware, electrical engineer, electronics, firmware, embedded,
+          asic, fpga, rf engineer, rf design, pcb, mechanical engineer, mechanical design,
+          manufacturing, optics, optical, photonics, photonic, silicon, semiconductor,
+          chip design, thermal engineer, systems engineer - hardware, ee]
+  - family: qa
+    any: [qa, sdet, quality assurance, quality engineer, test automation, automation test,
+          software test, quality control, test]
+  # "Product analyst" is product (SPEC §7.1) and "financial analyst" is finance, so both are
+  # claimed before data's generic "analyst".
+  - family: product
+    any: [product analyst, product manager, product owner, product management,
+          head of product, director of product, vp of product, chief product]
+  - family: finance
+    any: [financial analyst, finance analyst]
+  - family: data
+    any: [data scientist, data science, data engineer, data engineering, data analyst,
+          data platform, data architect, analytics, business intelligence, bi engineer,
+          bi analyst, analyst, etl, data warehouse]
+  - family: infrastructure
+    any: [infrastructure, platform engineer, platform engineering, devops, sre,
+          site reliability, reliability engineer, cloud engineer, cloud architect, kubernetes,
+          observability, developer productivity, developer experience, build engineer,
+          release engineer, network engineer]
+  # Roles whose title ends in "engineer" but belong to a business function (SPEC §7.1) are
+  # claimed before the generic software rule below.
+  - family: sales
+    any: [solutions engineer, sales engineer, solutions architect, solutions consultant,
+          forward deployed engineer]
+  - family: marketing
+    any: [developer relations, devrel, developer advocate, developer evangelist,
+          community engineer, growth engineer]
+  - family: operations
+    any: [support engineer, customer engineer, customer success engineer,
+          implementation engineer, technical support]
+  - family: people
+    any: [technical recruiter, engineering recruiter, recruiting engineer]
+  - family: software
+    any: [software engineer, software developer, swe, backend, back-end, back end, frontend,
+          front-end, front end, full-stack, fullstack, full stack, web engineer,
+          mobile engineer, ios, android, api engineer, systems engineer, compiler,
+          distributed systems, software architect, engineer, engineering, developer,
+          programmer, coding]
+  - family: product
+    any: [apm, technical product, group product, principal product, product lead, product ops]
+  - family: design
+    any: [designer, design, ux, ui, user experience, user interface, user research, user researcher,
+          product design, brand, motion graphics, industrial design, illustrator, creative]
+  - family: research
+    any: [researcher, research, physicist, chemist, biologist]
+  - family: sales
+    any: [sales, account executive, account manager, ae, sdr, bdr, business development,
+          partnerships, revenue operations, revops, channel manager, customer acquisition]
+  - family: marketing
+    any: [marketing, growth, demand gen, demand generation, content, seo, sem, social media,
+          community, brand manager, communications, public relations, pr, lifecycle, campaign]
+  - family: bizops
+    any: [business operations, bizops, biz ops, strategy, strategic, chief of staff,
+          corporate development, corp dev, business analyst, gtm strategy]
+  - family: finance
+    any: [finance, financial, accounting, accountant, controller, fp&a, treasury, tax, payroll,
+          audit, bookkeeper, billing, revenue accounting, accounts receivable,
+          accounts payable, receivable, payable, procurement analyst]
+  - family: people
+    any: [recruiting, recruiter, talent, sourcer, hr, human resources, people ops,
+          people operations, people partner, compensation, benefits, workplace,
+          learning and development]
+  - family: operations
+    any: [operations, supply chain, logistics, fulfillment, customer success, customer support,
+          customer experience, support, program manager, project manager, procurement,
+          facilities, warehouse, dispatch, scheduler, technician, coordinator]
+  - family: legal
+    any: [legal, counsel, attorney, lawyer, paralegal, policy, contracts manager, regulatory,
+          compliance, licensing]
+
+# ---------------------------------------------------------------------------- employment_type
+# `source_values` maps the ATS's own field (SPEC §7.1 "Derived from the ATS field where present")
+# onto the enum; the match is case-insensitive and ignores spaces, hyphens and underscores, so
+# `FullTime`, `Full-time` and `FULL_TIME` all land on full_time. Keyword rules are the fallback:
+# the title is scanned first and the description only if the title says nothing, because almost
+# every job description contains the words "full-time" somewhere.
+employment_type:
+  source_values:
+    full_time: [full-time, fulltime, full time, permanent, regular, salaried]
+    part_time: [part-time, parttime, part time]
+    contract: [contract, contractor, contracted, freelance, temporary contract, consultancy]
+    internship: [intern, internship, trainee, apprenticeship]
+    co_op: [co-op, coop, cooperative education]
+    temporary: [temporary, temp, seasonal, fixed term, fixed-term]
+  rules:
+    - type: internship
+      any: [intern, internship, summer intern, industrial placement]
+    - type: co_op
+      any: [co-op, coop, cooperative education]
+    - type: part_time
+      any: [part-time, part time, parttime, fractional, hourly, 10-20 hours, 15-20 hours,
+            20 hours a week, 20 hours/week, 20 hrs/week, 20 hrs a week, reduced hours]
+    - type: contract
+      any: [contract, contractor, consultant, freelance, "1099", temp-to-hire, statement of work]
+    - type: temporary
+      any: [temporary, seasonal, fixed term, fixed-term, maternity cover]
+    - type: full_time
+      any: [full-time, full time, fulltime, permanent]
+
+# --------------------------------------------------------------------------------- seniority
+# Title only, ordered most senior first so "Senior Engineering Manager" is a manager and
+# "Staff Software Engineer" is staff. No match is `unknown`.
+seniority:
+  - level: executive
+    any: [chief executive, chief technology, chief financial, chief operating, chief product,
+          chief marketing, chief revenue, chief people, chief of staff, ceo, cto, cfo, coo,
+          cpo, cmo, cro, ciso, vp, svp, evp, vice president, president, general manager,
+          founding engineer, co-founder, cofounder]
+  - level: director
+    any: [director, head of, senior director, executive director]
+  - level: manager
+    any: [manager, management, supervisor, team lead manager]
+  - level: principal
+    any: [principal, distinguished, fellow]
+  - level: staff
+    any: [staff, senior staff]
+  - level: lead
+    any: [lead, tech lead, technical lead, team lead]
+  - level: senior
+    any: [senior, sr, snr, experienced]
+  - level: mid
+    any: [mid-level, mid level, intermediate, ii]
+  - level: junior
+    any: [junior, jr, associate, apprentice, entry-level, entry level, level 1]
+  - level: new_grad
+    any: [new grad, new graduate, university grad, recent graduate, early career, campus,
+          graduate program, rotational]
+  - level: intern
+    any: [intern, internship, co-op, coop, student, undergraduate]
+
+# ---------------------------------------------------------------------------- flexible_signal
+# SPEC §7.1: a hint that a role may fit a student's academic year. It is shown as a badge and
+# offered as an opt-in filter — it is NEVER a default filter and never hides anything. Matched
+# against the title AND the description, because that is where these phrases actually appear.
+flexible_signal:
+  any: [students welcome, student welcome, students encouraged, currently enrolled,
+        during the school year, school year, academic year, around your class schedule,
+        class schedule, flexible hours, flexible schedule, flexible working hours,
+        hours are flexible, set your own hours, work around your schedule, part-time ok,
+        part time ok, part-time friendly, part-time or full-time, 10-20 hours, 15-20 hours,
+        20 hours a week, 20 hours/week, 20 hrs/week, 20 hrs a week, remote-friendly,
+        remote friendly, evenings and weekends, undergraduate, undergrad, students of all]
+
+# --------------------------------------------------------------------------------- funding
+# Vocabulary for `ingest/connectors/funding_rss.py` (SPEC §4 Tier 2 #5). `announcement` decides
+# whether a headline is a funding story at all; `round_type` maps it onto the RoundType enum.
+# Amounts are parsed numerically in the connector — a number is not a keyword.
+funding:
+  announcement:
+    any: [raises, raised, raising, secures, secured, lands, closes, closed a, nabs, banks,
+          funding round, seed round, series a, series b, series c, series d, series e,
+          venture round, valuation, fresh capital, war chest]
+  round_type:
+    - type: pre_seed
+      any: [pre-seed, preseed, pre seed]
+    - type: series_d_plus
+      any: [series d, series e, series f, series g, series h, growth round, late-stage round]
+    - type: series_a
+      any: [series a]
+    - type: series_b
+      any: [series b]
+    - type: series_c
+      any: [series c]
+    - type: convertible_note
+      any: [convertible note, convertible debt]
+    - type: safe
+      any: [safe note, simple agreement for future equity]
+    - type: debt
+      any: [venture debt, debt financing, credit facility, term loan]
+    - type: grant
+      any: [grant, non-dilutive award, sbir]
+    - type: seed
+      any: [seed round, seed funding, seed extension, seed investment, seed]

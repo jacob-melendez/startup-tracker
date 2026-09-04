@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
@@ -149,6 +149,14 @@ class ResolutionKey:
     domain: str | None
     normalized_name: str
     metro: str | None
+    #: Metros to search when the record has no location of its own. Set only by an
+    #: ``enrich_only`` record (design decision 4): an RSS headline names a company but no
+    #: address, so SPEC §8 step 2 would have nothing to scope to and the record could never
+    #: resolve. The name match then runs across these metros and is accepted **only when
+    #: exactly one company matches** — ambiguity resolves to nothing, never to a guess — and
+    #: the trigram step is skipped, because a fuzzy cross-metro match is precisely what §8
+    #: forbids. Ignored when ``metro`` is set.
+    search_metros: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,10 +181,15 @@ class Resolution:
 def _companies_in_metro(metro: str) -> Select[tuple[int]]:
     """Ids of companies with at least one location in ``metro`` (SPEC §8 "scoped to the same
     metro"). A subquery, so a company with several offices in the metro matches once."""
+    return _companies_in_metros((metro,))
+
+
+def _companies_in_metros(metros: Sequence[str]) -> Select[tuple[int]]:
+    """Ids of companies with at least one location in any of ``metros``."""
     return (
         select(CompanyLocation.company_id)
         .join(Location, Location.id == CompanyLocation.location_id)
-        .where(Location.metro == metro)
+        .where(Location.metro.in_(list(metros)))
     )
 
 
@@ -194,7 +207,9 @@ async def resolve_company(session: AsyncSession, key: ResolutionKey) -> Resoluti
 
     Steps 2 and 3 need a metro to scope to and are skipped when ``key.metro`` is ``None``
     (or the name normalized to nothing), so a domain-less, location-less record can only
-    ever be matched through step 0.
+    ever be matched through step 0 — unless it carries ``search_metros`` (design decision 4),
+    in which case step 2 runs across those metros and only a *unique* match counts, and step 3
+    is skipped entirely.
     """
     if key.external_id is not None:
         company_id = await session.scalar(
@@ -213,8 +228,13 @@ async def resolve_company(session: AsyncSession, key: ResolutionKey) -> Resoluti
             log.debug("resolved", step="domain", company_id=company_id)
             return Resolution(company_id, "domain")
 
-    if key.metro is None or not key.normalized_name:
+    if not key.normalized_name:
         return Resolution(None, None)
+
+    if key.metro is None:
+        if not key.search_metros:
+            return Resolution(None, None)
+        return await _resolve_across_metros(session, key)
 
     in_metro = _companies_in_metro(key.metro)
     company_id = await session.scalar(
@@ -257,6 +277,38 @@ async def resolve_company(session: AsyncSession, key: ResolutionKey) -> Resoluti
             candidates=[(c.company_id, round(c.similarity, 3)) for c in candidates],
         )
     return Resolution(None, None, candidates)
+
+
+async def _resolve_across_metros(session: AsyncSession, key: ResolutionKey) -> Resolution:
+    """SPEC §8 step 2 for a record with no location of its own (design decision 4).
+
+    The name match runs across ``key.search_metros`` — the metros configured in
+    ``config/regions.yaml``, which for v1 is the whole database — and is accepted **only when
+    exactly one company matches**. Two "Acme"s in two metros resolve to neither: an
+    ``enrich_only`` record is a headline, and guessing which company it means would attach a
+    funding round to the wrong one. Trigram similarity is deliberately not attempted here; a
+    fuzzy match with no metro to scope it is what SPEC §8 forbids.
+    """
+    rows = await session.execute(
+        select(Company.id)
+        .where(
+            Company.normalized_name == key.normalized_name,
+            Company.id.in_(_companies_in_metros(key.search_metros)),
+        )
+        .order_by(Company.id)
+        .limit(2)
+    )
+    ids = [row.id for row in rows]
+    if len(ids) == 1:
+        log.debug("resolved", step="name", company_id=ids[0], metros=list(key.search_metros))
+        return Resolution(ids[0], "name")
+    if ids:
+        log.info(
+            "ambiguous cross-metro name match ignored",
+            normalized_name=key.normalized_name,
+            connector=key.connector,
+        )
+    return Resolution(None, None)
 
 
 async def record_merge_candidates(

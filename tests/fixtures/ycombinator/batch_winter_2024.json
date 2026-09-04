@@ -1,0 +1,344 @@
+{
+ "results": [
+  {
+   "hits": [
+    {
+     "id": 29533,
+     "name": "Indemni",
+     "slug": "indemni",
+     "former_names": [
+      "Alacrity"
+     ],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/a4f88ce8a06e4b29451c4cd523deb4f547635bed.png",
+     "website": "http://www.indemni.com",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "We are building a safer supply chain. Cargo Theft has been increasing yearly, and the supply chain industry is urgently looking for ways to solve this. Using experience fighting fraud at the largest delivery marketplaces and logistics tech companies, we are building solutions to stop Cargo Theft and improve profit margins and revenue for warehouses and freight brokers.",
+     "one_liner": "Cargo Theft and Fraud Prevention Platform",
+     "team_size": 7,
+     "industry": "B2B",
+     "subindustry": "B2B -> Supply Chain and Logistics",
+     "launched_at": 1708029636,
+     "tags": [
+      "Identity",
+      "Logistics",
+      "Supply Chain",
+      "Fraud Prevention",
+      "Fraud Detection"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B",
+      "Supply Chain and Logistics"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29533"
+    },
+    {
+     "id": 29527,
+     "name": "ParcelBio",
+     "slug": "parcelbio",
+     "former_names": [
+      "Parcel Therapuetics",
+      "Parcel Therapeutics"
+     ],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/74f762bd0f8856c1dbe4d716afa6585e44f03870.png",
+     "website": "https://parcelbio.com/",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "ParcelBio is engineering a new class of mRNA medicines designed to deliver unprecedented potency and durability. Its proprietary APEXm™ platform uses novel RNA domains to enhance protein expression and extend activity, enabling therapies that reach the thresholds required for meaningful, and potentially curative, clinical outcomes. The company is advancing programs in autoimmune disease, oncology, and encoded protein therapeutics.",
+     "one_liner": "Elevated mRNA for transformative medicines.",
+     "team_size": 6,
+     "industry": "Healthcare",
+     "subindustry": "Healthcare -> Therapeutics",
+     "launched_at": 1707343020,
+     "tags": [
+      "Gene Therapy",
+      "Synthetic Biology",
+      "Biotech",
+      "Therapeutics",
+      "Drug discovery"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "Healthcare",
+      "Therapeutics"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29527"
+    },
+    {
+     "id": 29522,
+     "name": "Marr Labs",
+     "slug": "marr-labs",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/78a360f7a0cb054dd1d879714a91edbac53734cc.png",
+     "website": "https://www.marrlabs.com/",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Marr Labs is making AI-voice agents that are indistinguishable from humans. Han and Dave previously created speech tech company Vlingo that powered the first Siri app and was acquired for $225M. \r\n\r\n\r\nNow they are taking voice to the next level by making AI-voice agents that can handle virtually any phone-based job, from answering calls to schedule appointments to call center sales and support jobs—all at a fraction of the cost of a human agent.\r\n \r\n\r\nIn the US alone, businesses handle 17 billion calls a year at an average cost of $5 per call–an $85 billion addressable market. ",
+     "one_liner": "AI-voice agents that are indistinguishable from humans.",
+     "team_size": 9,
+     "industry": "B2B",
+     "subindustry": "B2B",
+     "launched_at": 1709760702,
+     "tags": [
+      "Artificial Intelligence",
+      "Conversational AI",
+      "AI Assistant"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29522"
+    },
+    {
+     "id": 29519,
+     "name": "Forge Rewards",
+     "slug": "forge-rewards",
+     "former_names": [
+      "Forge",
+      "Forge Rewards",
+      "Forge"
+     ],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/c135eee2915601bd39910219334c34b2549944a0.png",
+     "website": "https://www.joinforge.app/",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "",
+     "one_liner": "Starbucks app for restaurants",
+     "team_size": 5,
+     "industry": "B2B",
+     "subindustry": "B2B",
+     "launched_at": 1710184013,
+     "tags": [
+      "Artificial Intelligence",
+      "Restaurant Tech",
+      "Food Tech"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29519"
+    },
+    {
+     "id": 29517,
+     "name": "RetailReady",
+     "slug": "retailready",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/199d48c929434ddb64281cd83b9621eb37c3ed62.png",
+     "website": "https://www.retailreadyai.com/",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Every time workers in a warehouse box an order, they reference a 100 page manual with instructions like where to put the shipping label. RetailReady replaces the instruction manual with a tablet application.",
+     "one_liner": "An AI-powered supply chain compliance engine",
+     "team_size": 12,
+     "industry": "B2B",
+     "subindustry": "B2B -> Supply Chain and Logistics",
+     "launched_at": 1705423924,
+     "tags": [
+      "B2B",
+      "Compliance",
+      "Logistics",
+      "Supply Chain",
+      "AI"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": true,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B",
+      "Supply Chain and Logistics"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada"
+     ],
+     "stage": "Early",
+     "app_video_public": true,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": true,
+     "objectID": "29517"
+    },
+    {
+     "id": 29518,
+     "name": "Dropback",
+     "slug": "dropback",
+     "former_names": [
+      "FanCave"
+     ],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/b7cff51aae96543f4a2b5a8f4b6e64e2b3823e6e.png",
+     "website": "https://www.dropback.com",
+     "all_locations": "Remote",
+     "long_description": "Dropback is building front office software for the future of college sports. We help major athletic departments manage their teams' \"salary caps\" and roster limits to construct their most competitive rosters.\r\n\r\nJust two years ago, it became legal for athletes to earn an income beyond their scholarships. Since then, despite college athletes earning $2B+, rapid regulation change has put college sports in disarray. Dropback brings order to this chaos through custom compensation frameworks, roster management, what-if playgrounds, and more--ultimately helping elite programs optimize spend & maximi […trimmed for the fixture…]",
+     "one_liner": "The front office software suite for college sports",
+     "team_size": 2,
+     "industry": "Fintech",
+     "subindustry": "Fintech",
+     "launched_at": 1709324321,
+     "tags": [],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "Fintech"
+     ],
+     "regions": [
+      "Remote",
+      "Fully Remote"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": true,
+     "objectID": "29518"
+    },
+    {
+     "id": 29510,
+     "name": "Yarn",
+     "slug": "yarn-2",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/ecaa1199b6d124b85c33c51f6a249e1fff1b0f96.png",
+     "website": "https://www.yarn.so",
+     "all_locations": "New York City, NY, USA",
+     "long_description": "Yarn is a new kind of video product that lets anyone on your team ship videos: feature launches, custom demos, walkthroughs and explainers, ABM.\r\n\r\nYarn is the first agentic video system that doesn't compromise on quality or ease of use.",
+     "one_liner": "Yarn is the video product for agentic GTM teams.",
+     "team_size": 6,
+     "industry": "B2B",
+     "subindustry": "B2B",
+     "launched_at": 1708454742,
+     "tags": [
+      "Artificial Intelligence",
+      "B2B",
+      "Sales",
+      "Video",
+      "Marketing"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": true,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada"
+     ],
+     "stage": "Early",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29510"
+    },
+    {
+     "id": 29509,
+     "name": "Blacksmith",
+     "slug": "blacksmith",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/b33e396b9d2b1377a59dc2a41f52ea03155934ce.png",
+     "website": "https://blacksmith.sh/",
+     "all_locations": "",
+     "long_description": "Blacksmith helps companies run their continuous integration (CI) up to twice as fast, at half the cost. We do this by running their CI on high performance gaming CPUs.\r\n\r\n- Engineering productivity is often marred by slow CI that grows quadratically with the size of the engineering organization.\r\n- On top of this, companies pay high markups to run CI on the hyperscalers.\r\n- Consequently, companies have to run their CI on spot instances to keep costs in check. Since spot instances can get pre-empted at any point, running CI reliably on them requires [significant engineering investment](https:// […trimmed for the fixture…]",
+     "one_liner": "The fastest way to run your GitHub Actions",
+     "team_size": 3,
+     "industry": "B2B",
+     "subindustry": "B2B -> Infrastructure",
+     "launched_at": 1707846120,
+     "tags": [],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": true,
+     "nonprofit": false,
+     "batch": "Winter 2024",
+     "status": "Active",
+     "industries": [
+      "B2B",
+      "Infrastructure"
+     ],
+     "regions": [
+      "Unspecified"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "29509"
+    }
+   ],
+   "nbHits": 8,
+   "page": 0,
+   "nbPages": 1,
+   "hitsPerPage": 1000,
+   "index": "YCCompany_production",
+   "params": "query=&hitsPerPage=1000&page=0&facetFilters=[[\"batch:Winter 2024\"]]"
+  }
+ ]
+}

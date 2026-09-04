@@ -145,6 +145,11 @@ class CompanyRecord(Record):
     source, which lets the pipeline set ``closed_at`` on jobs from this connector that are no
     longer listed (SPEC §2, §5 — never deleted). Connectors that see only a slice of the jobs
     (an HN comment, a single posting) leave it ``False``.
+
+    ``enrich_only=True`` says this record may only *update* a company that already exists: if
+    entity resolution finds nothing the pipeline skips it instead of inserting. SPEC §4 Tier 2
+    #5 requires exactly that of ``funding_rss`` ("a signal to enrich an existing record, never
+    as a primary source"), and a headline is far too thin a thing to create a company from.
     """
 
     name: str = Field(min_length=1)
@@ -167,6 +172,41 @@ class CompanyRecord(Record):
     contacts: tuple[ContactRecord, ...] = ()
     jobs: tuple[JobRecord, ...] = ()
     jobs_complete: bool = False
+    enrich_only: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompanyTarget:
+    """One company the pipeline pre-loaded for a connector that *enriches* existing rows.
+
+    The ATS connectors and ``company_site`` do not discover companies; they visit the ones
+    already in the database. Rather than let a connector open a session — the invariant this
+    module states — :func:`ingest.pipeline.run_connector` loads the work list once (see
+    :func:`db.queries.load_company_targets`) and hands it over in :attr:`FetchContext.targets`
+    when the connector sets :attr:`Connector.wants_targets`.
+
+    ``external_id`` and ``last_seen_at`` are *this connector's* ``CompanySource`` row, so a
+    connector can tell a company it has never visited (``last_seen_at is None``) from one it
+    saw yesterday. The list is ordered oldest-first with never-visited companies at the front,
+    which is what makes a per-run cap (``company_site``) round-robin fairly.
+    """
+
+    company_id: int
+    name: str
+    domain: str | None
+    website_url: str | None
+    status: enums.CompanyStatus
+    ats_provider: enums.AtsProvider | None
+    ats_token: str | None
+    external_id: str | None
+    last_seen_at: datetime | None
+
+    @property
+    def home_url(self) -> str | None:
+        """The company's site: its stored ``website_url``, else ``https://{domain}/``."""
+        if self.website_url:
+            return self.website_url
+        return f"https://{self.domain}/" if self.domain else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -182,6 +222,10 @@ class FetchContext:
     search window that hit the API's result cap. Append a one-line description and carry on;
     the pipeline records the run as ``partial`` and puts the messages in
     ``FetchRun.error_text`` (SPEC §7.2) so breakage is visible on ``/runs`` without aborting.
+
+    ``targets`` is the pre-loaded work list of :class:`CompanyTarget` rows, filled only for a
+    connector that sets :attr:`Connector.wants_targets`; it is empty for every discovery
+    connector.
     """
 
     http: HttpClient
@@ -191,6 +235,7 @@ class FetchContext:
     run_id: int
     log: structlog.stdlib.BoundLogger
     problems: list[str] = field(default_factory=list)
+    targets: tuple[CompanyTarget, ...] = ()
 
 
 class Connector[RawT](ABC):
@@ -203,9 +248,15 @@ class Connector[RawT](ABC):
 
     ``RawT`` is whatever :meth:`fetch` yields; keeping fetching and mapping separate means the
     mapping is unit-testable from recorded fixtures without any HTTP at all.
+
+    ``wants_targets`` asks the pipeline to pre-load the companies already in the database into
+    ``FetchContext.targets`` (see :class:`CompanyTarget`). Connectors that *enrich* rather than
+    discover — the four ATS connectors and ``company_site`` — set it; the rule that a connector
+    never opens a session still holds.
     """
 
     name: ClassVar[str]
+    wants_targets: ClassVar[bool] = False
 
     def __init__(self, config: ConnectorConfig, regions: RegionsConfig) -> None:
         if config.name != self.name:

@@ -52,10 +52,12 @@ from db.models import (
 from db.queries import (
     close_missing_jobs,
     last_successful_run_started_at,
+    load_company_targets,
     refresh_company_denormalized_columns,
 )
 from ingest.base import (
     CompanyRecord,
+    CompanyTarget,
     Connector,
     ContactRecord,
     FetchContext,
@@ -180,11 +182,16 @@ def merge_company_fields(
 @dataclass(frozen=True, slots=True)
 class UpsertResult:
     """What :func:`upsert_company_record` did: the company the record landed on, whether that
-    company was created by this record, and how many ``MergeCandidate`` rows were written."""
+    company was created by this record, and how many ``MergeCandidate`` rows were written.
 
-    company_id: int
+    ``skipped`` marks the one case where nothing was written at all: an ``enrich_only`` record
+    (SPEC §4 Tier 2 #5) whose company does not exist yet. ``company_id`` is then ``None``.
+    """
+
+    company_id: int | None
     created: bool
     merge_candidates: int
+    skipped: bool = False
 
 
 def _rowcount(result: object) -> int:
@@ -783,11 +790,25 @@ async def upsert_company_record(
             domain=domain,
             normalized_name=normalized_name,
             metro=metro,
+            # Only an enrich-only record may be matched by name outside its own metro, and only
+            # when the match is unique (design decision 4, ``ingest/normalize.py``).
+            search_metros=(
+                tuple(region.metro for region in regions.regions) if record.enrich_only else ()
+            ),
         ),
     )
     created = False
     merge_candidates = 0
     company_id = resolution.company_id
+    if company_id is None and record.enrich_only:
+        # SPEC §4 Tier 2 #5: this connector may only enrich, never introduce a company.
+        log.info(
+            "enrich-only record skipped: no matching company",
+            connector=connector,
+            name=record.name,
+            domain=domain,
+        )
+        return UpsertResult(None, created=False, merge_candidates=0, skipped=True)
     if company_id is None:
         company_id = await _insert_company(session, incoming, connector, now=now)
         if company_id is not None:
@@ -911,6 +932,12 @@ async def _finish_run(
         return run
 
 
+class _TargetsUnavailable(Exception):
+    """Internal: the connector's pre-loaded work list could not be read, so its fetch is not
+    attempted. Raised and caught inside :func:`run_connector` only, so the run still ends with
+    a finalized ``FetchRun`` (SPEC §7.2)."""
+
+
 async def run_connector(
     connector: Connector[Any],
     *,
@@ -927,11 +954,15 @@ async def run_connector(
        — the ``started_at`` of the newest earlier run whose fetch completed (``ok`` or
        ``partial``; see :func:`db.queries.last_successful_run_started_at`).
     2. A :class:`~ingest.base.FetchContext` is built with a logger bound to the connector and
-       run id.
+       run id. When the connector sets ``wants_targets`` (design decision 5), the companies
+       already in the database are loaded first (:func:`db.queries.load_company_targets`) and
+       handed over in ``ctx.targets``, so no connector needs a session of its own.
     3. For every raw item ``connector.fetch`` yields, ``connector.to_records`` runs inside a
        try/except (a failing item is logged with ``exception``, its message recorded, and
        skipped) and each record is upserted in **its own transaction** so one bad record never
-       rolls back the others; ``n_upserted`` counts records written.
+       rolls back the others; ``n_upserted`` counts records written. An ``enrich_only`` record
+       whose company does not exist writes nothing (SPEC §4 Tier 2 #5) and counts as neither
+       upserted nor touched — it is not an error, so it does not make the run ``partial``.
     4. If ``fetch`` itself raises, iteration stops and the run is ``error`` regardless of how
        much was upserted: the scan did not complete, so the next run must not advance its
        incremental window past this one.
@@ -957,6 +988,21 @@ async def run_connector(
     name = connector.name
     run_id, last_success_at = await _start_run(session_factory, name, now)
     run_log = log.bind(connector=name, run_id=run_id)
+    targets: tuple[CompanyTarget, ...] = ()
+    targets_error: str | None = None
+    if connector.wants_targets:
+        # Design decision 5: connectors that enrich rather than discover get their work list
+        # from here, so ``ingest/base.py``'s "a connector never opens a session" still holds.
+        # A failure here is recorded like any other, never raised: the ``FetchRun`` row is
+        # already written and SPEC §7.2 requires it to be finalized.
+        try:
+            async with session_factory() as session:
+                targets = tuple(await load_company_targets(session, name))
+        except Exception as exc:
+            run_log.exception("targets could not be loaded")
+            targets_error = f"targets: {_describe(exc)}"
+        else:
+            run_log.info("targets loaded", targets=len(targets))
     ctx = FetchContext(
         http=http,
         now=now,
@@ -964,17 +1010,23 @@ async def run_connector(
         last_success_at=last_success_at,
         run_id=run_id,
         log=run_log,
+        targets=targets,
     )
     run_log.info("run started", since=since, last_success_at=last_success_at)
 
     n_fetched = 0
     n_upserted = 0
+    n_skipped = 0
     touched: set[int] = set()
-    fetch_error: str | None = None
+    # A work list that could not be loaded fails the run before a single request is made:
+    # a connector handed no targets would otherwise look like a connector with nothing to do.
+    fetch_error: str | None = targets_error
     item_errors: list[str] = []
     fetch_completed = False
     try:
         try:
+            if fetch_error is not None:
+                raise _TargetsUnavailable(fetch_error)
             async for raw in connector.fetch(ctx):
                 n_fetched += 1
                 try:
@@ -995,9 +1047,14 @@ async def run_connector(
                             f"item {n_fetched} ({record.name!r}): upsert: {_describe(exc)}"
                         )
                         continue
+                    if result.skipped or result.company_id is None:
+                        n_skipped += 1
+                        continue
                     n_upserted += 1
                     touched.add(result.company_id)
             fetch_completed = True
+        except _TargetsUnavailable:
+            pass  # already logged and already in ``fetch_error``
         except Exception as exc:
             run_log.exception("fetch failed", n_fetched=n_fetched, n_upserted=n_upserted)
             fetch_error = f"fetch: {_describe(exc)}"
@@ -1033,6 +1090,7 @@ async def run_connector(
             "status": status.value,
             "n_fetched": n_fetched,
             "n_upserted": n_upserted,
+            "n_skipped": n_skipped,
             "companies": len(touched),
             "item_errors": len(item_errors),
             "problems": len(ctx.problems),

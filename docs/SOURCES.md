@@ -120,40 +120,318 @@ run ends `partial` rather than failing (SPEC §7.2).
 
 ## `ycombinator` — Y Combinator company directory
 
-_Phase 3._
+**Official API: no — but a public index YC serves to its own site.** `ycombinator.com/companies`
+is a public directory backed by an Algolia search index. Nothing is scraped: the connector reads
+the same index, with the same public search key, that the page's own JavaScript uses.
 
-## `greenhouse` — Greenhouse job-board API
+### Endpoints
 
-_Phase 3._
+| purpose | URL |
+|---|---|
+| credentials | `https://www.ycombinator.com/companies` (the page embeds the Algolia app id and public search key) |
+| search | `POST https://{app_id}-dsn.algolia.net/1/indexes/*/queries`, index `YCCompany_production` |
 
-## `lever` — Lever postings API
+The search key **rotates** — the value older open-source clients hard-code now answers `403` —
+so it is read from the directory page at the start of every run. `options.app_id`/`api_key` in
+`config/connectors.yaml` are an emergency fallback; with neither the run fails loudly rather
+than reporting an empty directory.
 
-_Phase 3._
+### Terms and rate limit
 
-## `ashby` — Ashby posting API
+* `www.ycombinator.com/robots.txt` **allows** `/companies` (only `/companies?*`, the faceted
+  query strings, is disallowed). `respect_robots: true`; the DSN host redirects `/robots.txt`
+  into the REST API, which answers `404` — "unavailable", i.e. unrestricted, under RFC 9309
+  §2.3.1.3.
+* **2 requests/second**, and a whole run is ~52 requests once a week (one page fetch, one facet
+  query, one query per YC batch).
+* The public search key is a *search-only* credential YC publishes in its own page source; it is
+  sent as a header so it never lands in the on-disk response cache.
 
-_Phase 3._
+### Fields extracted
 
-## `workable` — Workable widget API
+`name`, `slug` (→ `CompanySource.external_id`), `website` (→ `Company.domain`, `website_url`),
+`one_liner`, `long_description` (→ `thesis`), `team_size` (→ `employee_est`),
+`industries` + `tags` + `industry`/`subindustry` + the batch as `"YC W24"` (→ `Sector`),
+`all_locations` (→ `Location`, filtered to `config/regions.yaml`), `status` (→
+`Company.status`: `Active`/`Public` → active, `Acquired` → acquired, `Inactive` → dead) and
+`Public`/`Growth` (→ `Company.stage`).
 
-_Phase 3._
+### Known limitations and deliberate omissions
+
+* **Work at a Startup is not ingested.** SPEC §4 says "where accessible"; its listings sit
+  behind a login, and this project does not authenticate to or scrape gated pages. YC's
+  `isHiring` flag is not a substitute for a job list, so the ATS connectors supply the roles.
+* Algolia's `paginationLimitedTo` is **1 000 hits**, so the index cannot be walked by a broad
+  query (`"San Francisco"` alone matches 3 141 companies). It is walked one `batch` facet value
+  at a time instead — 50 values, the largest holding 398. A facet value that outgrows the limit
+  is reported as a run problem rather than silently truncated.
+* `stage: Early` is deliberately **not** mapped: it says nothing about which round a company has
+  raised, and leaving `Company.stage` unset lets `sec_edgar` (which outranks this connector,
+  SPEC §8) fill it from a real Form D.
+* Companies whose `all_locations` names no configured city — including `Remote` — are counted
+  and dropped: the index is national and this project is regional (SPEC §1).
+
+---
+
+## Applicant tracking systems — `greenhouse`, `lever`, `ashby`, `workable`
+
+**Official APIs: yes.** All four are public, documented, JSON endpoints that exist so a company
+can publish its own board; given a board token they return every open role. This is the
+highest-value source for the actual goal of the project (SPEC §4 Tier 1 #3). The shared run
+mechanics live in `ingest/connectors/ats.py`.
+
+### Endpoints
+
+| connector | URL |
+|---|---|
+| `greenhouse` | `https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` |
+| `lever` | `https://api.lever.co/v0/postings/{token}?mode=json` |
+| `ashby` | `https://api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` |
+| `workable` | `https://apply.workable.com/api/v1/widget/accounts/{token}?details=true` |
+
+### Board-token discovery (SPEC §4)
+
+A company with no `ats_provider` yet has its own site fetched — the home page, then `/careers`,
+`/jobs` … (`options.discovery_paths`) — and the first ATS board URL in the markup becomes its
+token. Discovery matches **every** provider's URL shape, not just the running connector's, so
+one careers page answers the question for all four: whichever ATS connector runs first persists
+the token and the other three simply use it. The token is stored on the company row, so
+discovery runs once; it is re-run **only when the stored board answers 404** — in which case the
+fresh token replaces the stale one in the same run.
+
+Discovery is allowed to fail. Plenty of careers pages (`checkr.com`, `posthog.com`,
+`watershed.com`) render their board in JavaScript, so nothing is discoverable; the connector
+records the attempt and moves on rather than inventing a token.
+
+### Terms and rate limit
+
+* **1 request per host per 2 seconds** (`requests_per_second: 0.5`) and `respect_robots: true`
+  for all four. That is stricter than these APIs need, and deliberately so: discovery fetches an
+  arbitrary company's careers page, which is a Tier-3 fetch (SPEC §4), and a connector's limit is
+  set by the strictest thing it touches. Discovery reads at most 3 pages per company, inside
+  Tier 3's cap of five per domain per run, and `options.max_discovery_per_run` (15) bounds how
+  many companies one run may probe at all. No per-host budget is configured, because one API host
+  serves every company's board.
+* `robots.txt`: Greenhouse disallows only `/embed/`; Lever allows everything with
+  `Crawl-delay: 1` (honoured on top of our own interval); Workable's file is a bare `Disallow:`,
+  i.e. allow-all; `api.ashbyhq.com/robots.txt` answers `401`, which RFC 9309 §2.3.1.3 treats as
+  unrestricted.
+
+### Fields extracted
+
+| stored as | Greenhouse | Lever | Ashby | Workable |
+|---|---|---|---|---|
+| `Job.external_id` | `id` | `id` | `id` | `shortcode` |
+| `Job.title` | `title` | `text` | `title` | `title` |
+| `Job.url` | `absolute_url` | `hostedUrl` | `jobUrl` | `url` |
+| `Job.location_text` | `location.name` | `categories.allLocations` | `location` + `secondaryLocations` | `locations[]` / `city`,`state`,`country` |
+| `Job.is_remote` | "remote" in the location | `workplaceType == remote` | `isRemote` | `telecommuting` |
+| `Job.posted_at` | `first_published`, else `updated_at` | `createdAt` (epoch ms) | `publishedAt` | `published_on`, else `created_at` (**dates**, stored as midnight UTC) |
+| `Job.employment_type` | — (keyword rules) | `categories.commitment` | `employmentType` | `employment_type` |
+| `Job.compensation_raw` | — | `salaryRange` | `compensation.compensationTierSummary` | — |
+| `Job.description_raw` | `content` (doubly HTML-escaped) | `descriptionPlain` | `descriptionPlain` | `description` |
+| `Job.raw_payload` | the whole posting | | | |
+
+`role_family`, `seniority` and `flexible_signal` come from `ingest/classify.py` and
+`config/classifiers.yaml` for all four (SPEC §7.1). Ashby postings flagged `isListed: false` are
+drafts and are skipped.
+
+### Known limitations
+
+* **Workable's widget answers `200` with an empty `jobs` list for account names that were never
+  its customers** (verified against `persona`, `rippling`, `writer`). A board with no jobs *and*
+  no description is therefore treated as "nothing here", never as an empty board — and never as
+  the 404 that triggers re-discovery, which would re-probe the same careers page every night.
+* Greenhouse publishes no employment-type field, so its roles fall through to the keyword rules.
+* Ashby board tokens are case-insensitive (`jobs.ashbyhq.com/Linear` → `…/job-board/linear`).
+* These connectors **only enrich**: every record is `enrich_only`, so a board can never create a
+  company. A company with no domain and no matching name is skipped rather than guessed at.
+* The board is the company's whole open-role list, so a job that disappears from it gets
+  `closed_at` — never a delete (SPEC §2, §5).
+
+---
 
 ## `hn_hiring` — Hacker News "Who is hiring?" threads
 
-_Phase 3._
+**Official API: yes.** The [Hacker News Firebase API](https://github.com/HackerNews/API) is
+public, documented and unauthenticated. Comments are public posts whose authors intend them to
+be read — including the contact addresses they put in them (SPEC §6).
+
+### Endpoints
+
+| purpose | URL |
+|---|---|
+| the monthly threads | `https://hacker-news.firebaseio.com/v0/user/whoishiring.json` |
+| a story or comment | `https://hacker-news.firebaseio.com/v0/item/{id}.json` |
+
+### Terms and rate limit
+
+* **5 requests/second**; one monthly run reads one thread and up to
+  `options.max_comments_per_thread` (400) comments.
+* `robots.txt` disallows `/` but allows `/*.json$` — exactly the URLs this connector builds, and
+  the shared client enforces that per RFC 9309 (a `$`-anchored `Allow` the older `urllib` parser
+  would have ignored).
+
+### Fields extracted
+
+The convention is a pipe-separated header line, `COMPANY | ROLE | LOCATION | Full-time | REMOTE
+| URL`. Fields appear in any order, so each is classified by what it looks like: a field that
+resolves to a city in `config/regions.yaml` is the location, one the employment-type keywords
+recognise is the commitment, one that is a URL is the link, and the first field is the company.
+A comment with no pipes falls back to its leading proper name ("SwingVision is the AI tennis
+app…"). One `Job` per comment (`external_id` = the HN item id, `posted_at` = the comment time),
+plus one per `- Role: https://…` bullet, which is how multi-role comments are written. An email
+the poster wrote becomes a `Contact` with `confidence='published'`.
+
+### Known limitations
+
+* Only comments naming a configured city are kept — from the header's location field where
+  there is one, otherwise from anywhere in the body, and the choice is logged either way. A
+  passing mention of a Bay Area city in an out-of-region post will occasionally slip through.
+* **A link is not taken as the company's domain when it points at a job board or document
+  host** (`options.ignore_link_hosts`: Greenhouse, Lever, Ashby, Workable, Deel, Workday,
+  Notion, Google Docs, LinkedIn, GitHub …). Keying a company on `app.deel.com` would merge every
+  Deel customer into one row; such a company is resolved by name within its metro instead.
+* `jobs_complete` is **false**: a comment is a slice of a company's openings, so nothing here
+  ever closes a job another connector reported.
+* One comment advertises several roles, so the comment body is deliberately not used to infer
+  any single role's employment type — an "Intern" further down would otherwise make every role
+  in the comment an internship.
+
+---
 
 ## `funding_rss` — funding news feeds
 
-_Phase 3._
+**Official API: no; public RSS.** Ordinary syndication feeds, read as published. SPEC §4 Tier 2
+is explicit that this is "a signal to *enrich* an existing record, never as a primary source",
+and the connector is built that way: **every record is `enrich_only`**, so when entity resolution
+finds no company the pipeline writes nothing at all rather than inventing one from a headline.
+
+### Endpoints
+
+Whatever is listed in `funding_rss.options.feeds` — the only place a feed URL is written.
+Shipped defaults:
+
+| feed | URL |
+|---|---|
+| TechCrunch Venture | `https://techcrunch.com/category/venture/feed/` |
+| TechCrunch Startups | `https://techcrunch.com/category/startups/feed/` |
+
+SPEC §4 also names Axios Pro Rata and Business Wire. **Axios** (`axios.com/pro-rata.rss`) answers
+`403` to non-browser clients, and **Business Wire**'s feed ids
+(`feed.businesswire.com/rss/home/?rss=<id>`) are per-*subject* rather than per-topic, so neither
+is a default; either can be added to `options.feeds` without a code change.
+
+### Terms and rate limit
+
+**1 request/second**, `respect_robots: true` (TechCrunch's file disallows only `/wp-admin/`,
+`/wp-json/`, `/search/` and query-string variants — the category feeds are allowed). Only the
+public feed is read; article pages are not fetched.
+
+### Fields extracted
+
+The company name is whatever precedes the announcement verb in the headline ("Crusoe reportedly
+raises $3B…" → "Crusoe"), the amount is the first dollar figure, the `RoundType` comes from
+`config/classifiers.yaml`'s `funding.round_type` block, and `announced_date` is the item's
+publication date. The whole item — title, link, summary, guid, feed URL — is kept in
+`FundingRound.raw_payload`, and the feed's own item id is the round's `external_id`, so a
+re-syndicated headline updates the round instead of adding a second one.
+
+### Known limitations
+
+* Whether a headline is a funding story at all, and which round it names, are keyword decisions
+  (`config/classifiers.yaml`, `funding` block). Headlines phrased another way ("Qualcomm backs
+  Ultrahuman in $70M round") are skipped and counted — missing one is far better than attaching
+  a round to the wrong company.
+* A headline carries no address, so SPEC §8 step 2 has no metro to scope to. Such a record is
+  matched by exact normalized name across the metros in `config/regions.yaml`, and **only when
+  exactly one company matches**; ambiguity resolves to nothing. Trigram similarity is never used
+  here — a fuzzy cross-metro match is precisely what SPEC §8 forbids.
+* The amount is read left to right, so a headline naming both a raise and a valuation
+  ("raises $3B at a $30B valuation") stores the raise. Feeds that lead with the valuation would
+  store that instead.
+* Items older than `options.max_age_days` (30) are ignored so a reappearing item cannot re-date
+  a round; `--since` overrides the window (SPEC §14.3).
+
+---
 
 ## `product_hunt` — Product Hunt GraphQL API
 
-_Phase 3._
+_Not implemented (SPEC §4 Tier 2 #6). It has a `config/connectors.yaml` block so the scheduler
+and this document have one place to look._
+
+---
 
 ## `company_site` — direct company-site fetch (Tier 3, permission-gated)
 
-_Phase 3._
+**Official API: no.** This is the only connector that touches arbitrary third-party sites, and
+it only ever visits companies **already in the database** — it cannot discover one. SPEC §4's
+Tier-3 rules are all in force, all enforced by the shared client from this connector's
+`config/connectors.yaml` block:
+
+* `robots.txt` parsed and honoured **before every request** (`respect_robots: true`);
+* **at most 1 request per domain per 2 seconds** (`requests_per_second: 0.5`), stretched further
+  by a host's own `Crawl-delay`;
+* a hard cap of **5 pages per domain per run** (`max_requests_per_host_per_run: 5`), on top of
+  which the connector asks for at most 3;
+* responses cached 24 h with `ETag`/`Last-Modified`;
+* **never deeper than depth 1** — the home page, then links found *on it* whose path matches
+  `options.depth_one_paths` (`careers`, `jobs`, `about`, `team`) and which stay on the same
+  registrable domain. A careers page hosted on the company's ATS is that ATS's site and is not
+  fetched here.
+
+`options.max_companies_per_run` (40) bounds a whole run, and the pipeline hands targets over
+least-recently-visited first, so successive Saturday runs work through the entire database
+rather than re-fetching the same first forty sites.
+
+### Fields extracted
+
+`og:description` / `<meta name="description">` (→ `Company.one_liner`, and `thesis` when it is
+longer than the one-liner cap), the URL the redirects settled on (→ `website_url`), and the
+company's own careers page as a `Contact` with `kind='careers_page'` and
+`confidence='published'` — the company published that URL itself (SPEC §6).
+
+### Known limitations and deliberate omissions
+
+* Published `mailto:` addresses, footer social links, `Person` rows and the *constructed*
+  LinkedIn search links are SPEC §6 and are built in **Phase 5** (SPEC §12); this connector is
+  the fetch-and-parse half they hang off.
+* A site that declines — robots, a WAF `403`, a redirect loop — is skipped quietly. SPEC §4 says
+  a Tier-3 site may simply say no, and one company's Cloudflare must not colour the run.
+* Every record is `enrich_only`: a redirect that lands somewhere unexpected must never create a
+  company.
+
+---
 
 ## `opencorporates` — OpenCorporates API (on demand)
 
-_Phase 3._
+_Not implemented (SPEC §4 Tier 2 #7). Enrichment, not discovery: `cadence: null`._
+
+---
+
+## `seed` — the bootstrap loader (SPEC §10)
+
+Not a data source but a connector, so it gets the same `FetchRun` bookkeeping and upsert path.
+It reads `config/seed_companies.yaml` and, for each entry, sends **one `HEAD` request to
+`https://{domain}/`, following redirects** (`requests_per_second: 0.5`, `respect_robots: true`;
+a server that refuses `HEAD` with 405/501 is retried once with `GET`). It is deliberately
+**absent from the connector registry**, so `refresh --all` never re-validates the bootstrap
+list; `python cli.py seed` runs it.
+
+What the validation concludes:
+
+| outcome | company status |
+|---|---|
+| any answer in 2xx/3xx | unchanged — the loader writes no status at all |
+| `404` / `410` | `dead` |
+| host unreachable (DNS, connection, TLS, timeout after retries) | `dead`, with the reason in `FetchRun.error_text` |
+| `403`, `429`, `5xx` — a server *answered* | unchanged; a bot-hostile WAF is a fact about us, not about the company (`atom-computing.com` answers 403 to this User-Agent and is very much alive) |
+| `robots.txt` disallows the probe | unchanged, and the skip is reported |
+
+A dead entry is still stored: the database is the historical record (SPEC §2). The final URL
+becomes `website_url`; the canonical `domain` stays the one the file names even when a redirect
+crossed to another host, so one typo can never swallow another company's row. **No entry may
+carry an ATS token** — the model forbids the field, and the ATS connectors discover them
+(SPEC §4, §10). `seed` is unlisted in the connector priority order and therefore ranks below
+every real connector, so a bootstrap value is replaced by the first source that reports it for
+real (SPEC §8).

@@ -1,0 +1,368 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6103567004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5179928004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6103567004,
+   "updated_at": "2026-08-24T16:12:46-04:00",
+   "requisition_id": "634",
+   "title": "Agent Engineer [IC4]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-07-09T09:09:30-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4003227004,
+     "name": "Engineering",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6103567004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6113147004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5184827004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6113147004,
+   "updated_at": "2026-09-03T20:55:41-04:00",
+   "requisition_id": "637",
+   "title": "Product Manager [IC4]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-08-03T13:12:07-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4003231004,
+     "name": "Product",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6113147004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6007967004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5159547004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6007967004,
+   "updated_at": "2026-08-24T16:12:46-04:00",
+   "requisition_id": "640",
+   "title": "Regional Sales Director [M4]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-06-03T14:39:36-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4109548004,
+     "name": "Revenue",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6007967004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6146485004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5201735004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6146485004,
+   "updated_at": "2026-08-25T14:33:08-04:00",
+   "requisition_id": "642",
+   "title": "Customer Success Manager - US [IC2] ",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-08-25T14:33:08-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4109548004,
+     "name": "Revenue",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6146485004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/4621149004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": null,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 4621149004,
+   "updated_at": "2026-04-20T20:27:16-04:00",
+   "requisition_id": null,
+   "title": "Join our Talent Community to learn about future job opportunities!",
+   "company_name": "Sourcegraph",
+   "first_published": "2022-08-09T13:10:02-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [],
+   "offices": [],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6007621004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5159369004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6007621004,
+   "updated_at": "2026-08-24T16:12:46-04:00",
+   "requisition_id": "631",
+   "title": "Security Engineer [IC3]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-06-08T10:38:55-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4003227004,
+     "name": "Engineering",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6007621004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6132206004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5194470004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6132206004,
+   "updated_at": "2026-08-24T16:12:47-04:00",
+   "requisition_id": "641",
+   "title": "Senior Product Marketing Manager [IC4]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-07-31T15:58:36-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4003228004,
+     "name": "Marketing",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6132206004/ai_opt_out"
+  },
+  {
+   "absolute_url": "https://job-boards.greenhouse.io/sourcegraph91/jobs/6103628004",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": true
+    }
+   ],
+   "internal_job_id": 5179961004,
+   "location": {
+    "name": "Remote"
+   },
+   "metadata": null,
+   "id": 6103628004,
+   "updated_at": "2026-08-24T16:12:46-04:00",
+   "requisition_id": "636",
+   "title": "Software Engineer - Platform [IC3]",
+   "company_name": "Sourcegraph",
+   "first_published": "2026-07-09T12:15:18-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;h2&gt;&lt;span style=&quot;color: rgb(243, 78, 63);&quot;&gt;Who we are&lt;/span&gt;&lt;/h2&gt;\n&lt;p&gt;Our mission is to bring clarity and control to the world&#39;s most complex codebases. AI is accelerating code creation, but the infrastructure to understand, oversee, and evolve that code hasn&#39;t kept pace. Sourcegraph gives engineering organizations full visibility across their systems, precise context for their agents, and the ability to execute coordinated code changes at scale. As agentic development becomes the dominant engineering paradigm, we provide the context layer teams need to take control of their codebase.&lt;br&gt;&lt;br&gt;With Code Search, Deep Search, MCP, and Agentic Batch Changes, we deliver on that mission today - giving engineering teams and their AI tools the cross-repo context to navigate massive codebases with confidence, and the ability to make changes across hundreds of repositories at once.&lt;br&gt;&lt;br&gt;Companies like Stripe, Reddit, and Leidos rely on Sourcegraph to ship faster and with higher quality. We&#39;re backed by a16z, Sequoia, and Redpoint, and proud to operate as a globally distribut […trimmed for the fixture…]",
+   "departments": [
+    {
+     "id": 4003227004,
+     "name": "Engineering",
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "offices": [
+    {
+     "id": 4006284004,
+     "name": "Remote ",
+     "location": null,
+     "child_ids": [],
+     "parent_id": null
+    }
+   ],
+   "ai_disclaimer": "<p>We use Greenhouse’s AI-powered Talent Matching tool to compare your application against our job requirements.</p>",
+   "include_ai_disclaimer": true,
+   "ai_opt_out_request_url": "http://app4.greenhouse.io/ai_opt_out_request/job_post/6103628004/ai_opt_out"
+  }
+ ],
+ "meta": {
+  "total": 9
+ }
+}

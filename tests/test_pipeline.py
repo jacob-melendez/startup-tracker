@@ -1372,6 +1372,7 @@ async def test_refresh_is_not_part_of_the_upsert(session: AsyncSession) -> None:
     result = await upsert_company_record(
         session, make_record(jobs=[job("j1")]), "greenhouse", now=NOW
     )
+    assert result.company_id is not None  # only an enrich_only record can be skipped
     company = await session.get(Company, result.company_id)
     assert company is not None
     assert (company.open_job_count, company.latest_job_posted_at) == (0, None)

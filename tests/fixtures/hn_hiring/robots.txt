@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /*.json$
+Allow: /*.json?*$
+Disallow: /

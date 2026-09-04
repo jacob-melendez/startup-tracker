@@ -44,6 +44,7 @@ from ingest.config import (
 from ingest.connectors import all_connectors
 from ingest.connectors.sec_edgar import SecEdgarConnector
 from ingest.http import FileCache, HttpClient, MemoryCache
+from ingest.seed import SeedConnector
 from logging_config import get_logger
 from settings import Settings, get_settings
 
@@ -233,11 +234,12 @@ def summary_lines(result: Result) -> list[str]:
 # ------------------------------------------------------------------ help and usage errors
 
 
-def test_help_lists_the_phase_2_commands(runner: CliRunner) -> None:
+def test_help_lists_the_registered_commands(runner: CliRunner) -> None:
     result = invoke(runner, "--help")
     assert result.exit_code == 0
     assert "refresh" in result.output
     assert "migrate" in result.output
+    assert "seed" in result.output
 
 
 def test_refresh_help_documents_now_and_since(runner: CliRunner) -> None:
@@ -499,6 +501,60 @@ def test_run_connector_raising_is_reported_and_exits_1(
     assert "fetch_runs" in result.stderr
     assert "not recorded" in result.stderr
     assert dispose_calls == [1], "the engine is disposed even when the run raised"
+
+
+# ------------------------------------------------------------------ seed (SPEC §10)
+
+
+def test_seed_runs_the_seed_loader_which_is_not_in_the_refresh_registry(
+    runner: CliRunner, fake_run: FakeRunConnector
+) -> None:
+    """``cli.py seed`` builds :class:`ingest.seed.SeedConnector` directly, because a bootstrap
+    must not be re-run by ``refresh --all`` every night (SPEC §10)."""
+    assert SeedConnector.name not in all_connectors()
+
+    result = invoke(runner, "seed")
+    assert result.exit_code == 0, result.output
+    assert [call.connector.name for call in fake_run.calls] == ["seed"]
+    connector = fake_run.calls[0].connector
+    assert isinstance(connector, SeedConnector)
+    assert connector.options.validate_domains is True
+    assert len(summary_lines(result)) == 1
+
+
+def test_seed_needs_no_contact_email(runner: CliRunner, fake_run: FakeRunConnector) -> None:
+    """Only ``sec_edgar`` does (SPEC §4); the seed loader probes ordinary company sites."""
+    result = invoke(runner, "seed")
+    assert result.exit_code == 0, result.output + result.stderr
+
+
+def test_seed_skip_validation_turns_the_network_probe_off(
+    runner: CliRunner, fake_run: FakeRunConnector
+) -> None:
+    result = invoke(runner, "seed", "--skip-validation")
+    assert result.exit_code == 0, result.output
+    connector = fake_run.calls[0].connector
+    assert isinstance(connector, SeedConnector)
+    assert connector.options.validate_domains is False
+
+
+def test_seed_reports_a_failed_run_like_refresh(
+    runner: CliRunner, fake_run: FakeRunConnector
+) -> None:
+    fake_run.status = enums.FetchRunStatus.ERROR
+    fake_run.error_text = "gone.example: marked dead"
+    result = invoke(runner, "seed")
+    assert result.exit_code == 1
+    assert "status=error" in result.output
+    assert "gone.example" in result.output
+
+
+def test_seed_help_explains_the_domain_validation(runner: CliRunner) -> None:
+    result = invoke(runner, "seed", "--help")
+    assert result.exit_code == 0
+    assert "--skip-validation" in result.output
+    assert "HEAD" in result.output
+    assert "dead" in result.output
 
 
 # ------------------------------------------------------------------ --all

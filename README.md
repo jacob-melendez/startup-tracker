@@ -10,7 +10,25 @@ truth; `CLAUDE.md` lists the non-negotiables; `docs/SOURCES.md` documents every 
 cp .env.example .env      # then set CONTACT_EMAIL (see below)
 make up                   # Postgres 16 via Docker Compose
 make migrate              # alembic upgrade head
+make seed                 # load the Bay Area bootstrap list (SPEC §10)
 ```
+
+## Seeding
+
+`make seed` (or `python cli.py seed`) loads `config/seed_companies.yaml` — the Bay Area
+bootstrap set of SPEC §10 — and **resolves every domain over the network**: one `HEAD` request
+per entry, redirects followed. An entry whose host cannot be reached at all, or whose site
+answers `404`/`410`, is stored with `status='dead'` and logged; the run never fails because of
+it. A `403` from a bot-blocking WAF is *not* treated as dead — the host answered. `--skip-validation`
+turns the probe off for an offline first run.
+
+Seeding takes a few minutes: the loader is polite (one request per host per two seconds, and it
+reads each host's `robots.txt` first). It is safe to re-run — entries are upserted on the
+normalized domain — and it never writes an ATS board token: the Greenhouse, Lever, Ashby and
+Workable connectors discover those from each company's own careers page (SPEC §4, §10).
+
+The seed list is a bootstrap, not a target. After a `refresh --all` the `ycombinator` and
+`sec_edgar` connectors contribute far more companies than these 58.
 
 ## Refreshing data
 
@@ -49,7 +67,18 @@ handlers never make outbound calls (SPEC §2).
    `status=error  fetch_run=not-recorded ...`, a note goes to stderr, and nothing appears in
    `fetch_runs` — do not look for a row for that line.
 
-Cadences and rate limits live in `config/connectors.yaml`, the city list in `config/regions.yaml`.
+Cadences and rate limits live in `config/connectors.yaml`, the city list in `config/regions.yaml`,
+and every keyword that classifies a role — `role_family`, `employment_type`, `seniority`,
+`flexible_signal` — in `config/classifiers.yaml`. All four are edited without touching Python.
+
+**Classification never excludes.** A job title that matches no rule is stored with
+`role_family='other'` and still appears in the default views; `flexible_signal` is a badge and an
+opt-in filter, never a default one (SPEC §7.1). The list order in `config/classifiers.yaml` *is*
+the precedence between overlapping keywords, so reordering two rules is how you change which one
+wins.
+
+`seed` is deliberately absent from `refresh --all`: it is a bootstrap, and re-validating 58
+domains every night buys nothing. Run `make seed` when the list changes.
 
 ## Development
 

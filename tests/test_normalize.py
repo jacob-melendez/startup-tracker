@@ -155,6 +155,7 @@ def _key(**overrides: Any) -> ResolutionKey:
         "domain": None,
         "normalized_name": "",
         "metro": None,
+        "search_metros": (),
     }
     return ResolutionKey(**{**fields, **overrides})
 
@@ -252,6 +253,63 @@ async def test_name_match_is_skipped_for_a_record_without_a_metro(session: Async
     await _company(session, "Stripe, Inc.", location=sf)
 
     resolution = await resolve_company(session, _key(normalized_name="stripe", metro=None))
+
+    assert resolution == Resolution(None, None, ())
+
+
+# ------------------------------------------------- search_metros (design decision 4, Phase 3)
+
+
+async def test_search_metros_matches_a_record_that_has_no_location(session: AsyncSession) -> None:
+    """An ``enrich_only`` record — an RSS funding headline — carries a company name and no
+    address, so SPEC §8 step 2 has no metro to scope to. ``search_metros`` scopes it to the
+    metros ``config/regions.yaml`` configures instead."""
+    sf = await _location(session, "San Francisco", "CA", BAY_AREA)
+    company = await _company(session, "Crusoe", location=sf)
+
+    resolution = await resolve_company(
+        session, _key(normalized_name="crusoe", metro=None, search_metros=(BAY_AREA,))
+    )
+
+    assert resolution == Resolution(company.id, "name", ())
+
+
+async def test_search_metros_refuses_an_ambiguous_match(session: AsyncSession) -> None:
+    """Two companies of that name in two metros: a headline must not guess which it means."""
+    sf = await _location(session, "San Francisco", "CA", BAY_AREA)
+    austin = await _location(session, "Austin", "TX", "Austin")
+    await _company(session, "Crusoe", location=sf)
+    await _company(session, "Crusoe", location=austin)
+
+    resolution = await resolve_company(
+        session, _key(normalized_name="crusoe", metro=None, search_metros=(BAY_AREA, "Austin"))
+    )
+
+    assert resolution == Resolution(None, None, ())
+
+
+async def test_search_metros_never_reaches_the_trigram_step(session: AsyncSession) -> None:
+    """A fuzzy match with no metro of its own is exactly what SPEC §8 forbids."""
+    sf = await _location(session, "San Francisco", "CA", BAY_AREA)
+    await _company(session, "Applied Intuition", location=sf)
+
+    resolution = await resolve_company(
+        session,
+        _key(normalized_name="applied intuitions", metro=None, search_metros=(BAY_AREA,)),
+    )
+
+    assert resolution == Resolution(None, None, ())
+
+
+async def test_search_metros_is_ignored_when_the_record_has_its_own_metro(
+    session: AsyncSession,
+) -> None:
+    austin = await _location(session, "Austin", "TX", "Austin")
+    await _company(session, "Crusoe", location=austin)
+
+    resolution = await resolve_company(
+        session, _key(normalized_name="crusoe", metro=BAY_AREA, search_metros=("Austin",))
+    )
 
     assert resolution == Resolution(None, None, ())
 

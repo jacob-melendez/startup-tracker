@@ -24,8 +24,10 @@ them:
   rejects anything more elaborate: parentheses, URLs, or an email without a real domain
   (``dev@localhost``) come back as 403 "Undeclared Automated Tool".
 
-Connectors call :meth:`HttpClient.get` / :meth:`get_json` / :meth:`get_text` and nothing else;
-tests mock the wire with ``respx`` and recorded fixtures (SPEC §3).
+Connectors call :meth:`HttpClient.get` / :meth:`get_json` / :meth:`get_text`, plus
+:meth:`head` (SPEC §10's seed-domain validation) and :meth:`post_json` (Algolia's search
+endpoint, SPEC §4 Tier 1 #2) — and nothing else; tests mock the wire with ``respx`` and
+recorded fixtures (SPEC §3).
 """
 
 from __future__ import annotations
@@ -87,12 +89,25 @@ class HttpClientError(Exception):
 
 
 class RobotsDisallowed(HttpClientError):
-    """``robots.txt`` forbids this URL for our user agent; the request was not sent."""
+    """``robots.txt`` forbids this URL for our user agent; the request was not sent.
 
-    def __init__(self, url: str, user_agent: str) -> None:
-        super().__init__(f"robots.txt disallows {url} for {user_agent!r}")
+    ``reason`` separates the two ways that happens, because they say opposite things about the
+    host. ``"disallowed"`` means a robots.txt was read and it excludes this path — the host is
+    up and has told us no. ``"unreachable"`` means robots.txt could not be read at all (a 5xx,
+    or a transport failure that outlived the retry policy), which RFC 9309 §2.3.1.4 says to
+    treat as a full disallow — and which usually means the host itself is down. The seed
+    loader (SPEC §10) needs the difference: an unreachable host is a dead domain, while a host
+    that answered "no" is very much alive.
+    """
+
+    def __init__(self, url: str, user_agent: str, reason: str = "disallowed") -> None:
+        detail = (
+            "robots.txt could not be read" if reason == "unreachable" else "robots.txt disallows"
+        )
+        super().__init__(f"{detail} {url} for {user_agent!r}")
         self.url = url
         self.user_agent = user_agent
+        self.reason = reason
 
 
 class HostBudgetExceeded(HttpClientError):
@@ -535,14 +550,74 @@ class HttpClient:
         ``httpx.TooManyRedirects``. Every returned response carries
         ``extensions["from_cache"]``.
         """
+        return await self.request("GET", url, params=params, headers=headers)
+
+    async def head(
+        self,
+        url: str,
+        *,
+        params: Params | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        """HEAD ``url`` under exactly the same rules as :meth:`get`, following redirects.
+
+        This is what SPEC §10 asks the seed loader to do to validate a domain ("resolve each
+        domain (HEAD request, follow redirects)"): the status and the final URL are all it
+        needs, and no body crosses the wire. Nothing is read from or written to the cache — a
+        HEAD has no body to store, and storing its validators would let a later ``get`` of the
+        same URL be answered by a 304 with no body at all.
+
+        A server that answers ``405 Method Not Allowed`` or ``501 Not Implemented`` raises
+        ``httpx.HTTPStatusError`` like any other 4xx/5xx; callers that need a body-less probe to
+        work everywhere fall back to :meth:`get` (see ``ingest/seed.py``).
+        """
+        return await self.request("HEAD", url, params=params, headers=headers)
+
+    async def post_json(
+        self,
+        url: str,
+        *,
+        content: str | bytes,
+        params: Params | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Any:
+        """POST ``content`` and decode the JSON answer, under the same rules as :meth:`get`.
+
+        The one connector that needs it is ``ycombinator``: Algolia's search endpoint takes the
+        query in a POST body and the credentials in headers (SPEC §4 Tier 1 #2). Nothing is
+        cached — a POST is not a cache key — and redirects are *not* followed, because
+        re-posting a body to a new location is a decision no client should make silently.
+        """
+        response = await self.request("POST", url, params=params, headers=headers, content=content)
+        return response.json()
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Params | None = None,
+        headers: Mapping[str, str] | None = None,
+        content: str | bytes | None = None,
+    ) -> httpx.Response:
+        """:meth:`get`, :meth:`head` and :meth:`post_json` in one: the governed request loop.
+
+        Redirects are followed for ``GET`` and ``HEAD`` only (see :meth:`get`); any other
+        method returns the 3xx response to its caller untouched.
+        """
+        follow_redirects = method in ("GET", "HEAD")
         request_url = httpx.URL(url)
         if params:
             request_url = request_url.copy_merge_params(dict(params))
         extra_headers = dict(headers or {})
         for _hop in range(_MAX_REDIRECTS + 1):
-            response = await self._fetch(request_url, extra_headers)
+            response = await self._fetch(request_url, extra_headers, method=method, content=content)
             location = response.headers.get("location")
-            if response.status_code not in _REDIRECT_STATUS or location is None:
+            if (
+                not follow_redirects
+                or response.status_code not in _REDIRECT_STATUS
+                or location is None
+            ):
                 return response
             next_url = request_url.join(location)
             await response.aclose()
@@ -554,7 +629,7 @@ class HttpClient:
             )
             request_url = next_url
         msg = f"Exceeded maximum allowed redirects ({_MAX_REDIRECTS}) fetching {url}"
-        raise httpx.TooManyRedirects(msg, request=httpx.Request("GET", request_url))
+        raise httpx.TooManyRedirects(msg, request=httpx.Request(method, request_url))
 
     async def get_json(
         self,
@@ -591,12 +666,22 @@ class HttpClient:
 
     # ------------------------------------------------------------------ one hop
 
-    async def _fetch(self, url: httpx.URL, extra_headers: dict[str, str]) -> httpx.Response:
+    async def _fetch(
+        self,
+        url: httpx.URL,
+        extra_headers: dict[str, str],
+        *,
+        method: str = "GET",
+        content: str | bytes | None = None,
+    ) -> httpx.Response:
         """One redirect hop: robots check, then :meth:`_send_once` under the retry policy."""
         host = _rate_key(url)
         await self._check_robots(url, host)
         return await self._with_retries(
-            url, functools.partial(self._send_once, url, host, extra_headers)
+            url,
+            functools.partial(
+                self._send_once, url, host, extra_headers, method=method, content=content
+            ),
         )
 
     async def _with_retries(
@@ -654,27 +739,35 @@ class HttpClient:
         return wait
 
     async def _send_once(
-        self, url: httpx.URL, host: str, extra_headers: dict[str, str]
+        self,
+        url: httpx.URL,
+        host: str,
+        extra_headers: dict[str, str],
+        *,
+        method: str = "GET",
+        content: str | bytes | None = None,
     ) -> httpx.Response:
-        """One attempt: budget → rate limit → conditional GET → classify the answer.
+        """One attempt: budget → rate limit → conditional request → classify the answer.
 
         The budget is taken *before* sending and never given back — retries and redirect hops
         are real requests to the host (design decision 11) — and the (N+1)th raises
         :class:`HostBudgetExceeded` before waiting for a slot. The cache (SPEC §4, 24 h) turns
-        the request conditional; a ``304`` becomes the cached body (design decision 9).
+        the request conditional; a ``304`` becomes the cached body (design decision 9). A
+        ``HEAD`` neither reads nor writes the cache: it carries no body to store.
         """
         self._take_budget(host)
         await self._wait_for_slot(host)
 
+        cacheable = method == "GET"
         cache_key = str(url)
-        entry = self._fresh_entry(cache_key)
+        entry = self._fresh_entry(cache_key) if cacheable else None
         request_headers = dict(extra_headers)
         if entry is not None:
             if entry.etag:
                 request_headers["If-None-Match"] = entry.etag
             if entry.last_modified:
                 request_headers["If-Modified-Since"] = entry.last_modified
-        request = self._client.build_request("GET", url, headers=request_headers)
+        request = self._client.build_request(method, url, headers=request_headers, content=content)
         self._count_request(host)
         response = await self._client.send(request)
         status = response.status_code
@@ -702,7 +795,8 @@ class HttpClient:
                 extensions={"from_cache": True},
             )
         if 200 <= status < 300:
-            self._store(cache_key, response)
+            if cacheable:
+                self._store(cache_key, response)
             response.extensions["from_cache"] = False
             return response
         if status in _REDIRECT_STATUS:
@@ -791,14 +885,12 @@ class HttpClient:
         path = url.raw_path.decode("ascii", "replace")
         allowed = entry.rules is not None and entry.rules.can_fetch(path)
         if not allowed:
+            reason = "unreachable" if entry.rules is None else "disallowed"
             self._stats.robots_denied += 1
             self._log.info(
-                "http.robots_denied",
-                url=str(url),
-                user_agent=self._user_agent,
-                reason="robots.txt unreachable" if entry.rules is None else "disallowed",
+                "http.robots_denied", url=str(url), user_agent=self._user_agent, reason=reason
             )
-            raise RobotsDisallowed(str(url), self._user_agent)
+            raise RobotsDisallowed(str(url), self._user_agent, reason)
 
     async def _robots_for(self, url: httpx.URL, host: str) -> _RobotsEntry:
         """The origin's robots.txt, fetched once per client and kept for 24 h in memory —

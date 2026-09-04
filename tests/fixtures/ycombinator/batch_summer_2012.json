@@ -1,0 +1,343 @@
+{
+ "results": [
+  {
+   "hits": [
+    {
+     "id": 439,
+     "name": "Coinbase",
+     "slug": "coinbase",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/1169cb0b69fa7b338b5d51c2d3805f8f988bdfa5.png",
+     "website": "https://www.coinbase.com",
+     "all_locations": "Los Angeles, CA, USA; Remote",
+     "long_description": "Founded in June of 2012, Coinbase is a digital currency wallet and platform where merchants and consumers can transact with new digital currencies like bitcoin, ethereum, and litecoin. Our vision is to bring more innovation, efficiency, and equality of opportunity to the world by building an open financial system. Our first step on that journey is making digital currency accessible and approachable for everyone. Two principles guide our efforts. First, be the most trusted company in our domain. Second, create user-focused products that are easier and more intuitive to use.",
+     "one_liner": "Buy, sell, and manage cryptocurrencies.",
+     "team_size": 6112,
+     "industry": "Fintech",
+     "subindustry": "Fintech -> Banking and Exchange",
+     "launched_at": 1336096943,
+     "tags": [
+      "Crypto / Web3"
+     ],
+     "tags_highlighted": [
+      "Crypto / Web3"
+     ],
+     "top_company": true,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Public",
+     "industries": [
+      "Fintech",
+      "Banking and Exchange"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Fully Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "439"
+    },
+    {
+     "id": 468,
+     "name": "Instacart",
+     "slug": "instacart",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/9750fca21baaee75e035f1baaf58df8e2f5dcc67.png",
+     "website": "https://www.instacart.com",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Instacart is the North American leader in online grocery and one of the fastest-growing companies in e-commerce. Instacart’s same-day delivery and pickup services bring fresh groceries and everyday essentials to busy people and families across the U.S. and Canada in as fast as an hour. Since its founding in 2012, Instacart has become an essential service for millions of families, while also serving as an immediate, flexible earnings opportunity for hundreds of thousands of shoppers across North America.  The company partners with more than 350 retailers and delivers from more than 25,000 store […trimmed for the fixture…]",
+     "one_liner": "Marketplace for grocery delivery and pickup",
+     "team_size": 3000,
+     "industry": "Consumer",
+     "subindustry": "Consumer -> Food and Beverage",
+     "launched_at": 1340213784,
+     "tags": [
+      "Grocery",
+      "Delivery",
+      "E-commerce"
+     ],
+     "tags_highlighted": [],
+     "top_company": true,
+     "isHiring": true,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Public",
+     "industries": [
+      "Consumer",
+      "Food and Beverage"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "468"
+    },
+    {
+     "id": 445,
+     "name": "Benchling",
+     "slug": "benchling",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/56dfbb621883fb62890bd66d7bd967984b974c12.png",
+     "website": "http://benchling.com",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Biotechnology is rewriting life as we know it, from the medicines we take, to the crops we grow, the materials we wear, and the household goods that we rely on every day. Biotech R&D is radically transforming our world, but to move at the new speed of science, scientists need better technology.\r\n\r\nBenchling’s mission is to unlock the power of biotechnology. The world’s biotech leaders and innovators use our R&D Cloud to power the development of breakthrough products and accelerate time to milestone and market.",
+     "one_liner": "Unlocking the power of biotech with modern software for modern science",
+     "team_size": 750,
+     "industry": "B2B",
+     "subindustry": "B2B",
+     "launched_at": 1336096997,
+     "tags": [
+      "SaaS",
+      "B2B",
+      "Biotech"
+     ],
+     "tags_highlighted": [],
+     "top_company": true,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Active",
+     "industries": [
+      "B2B"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": true,
+     "objectID": "445"
+    },
+    {
+     "id": 429,
+     "name": "Lever",
+     "slug": "lever",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/5aab29bbd372c8ae56867cfafbca2d5d2ae180e6.png",
+     "website": "https://www.lever.co/",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Lever is one of the most recognized brands in talent acquisition software for high growth companies. We enable teams to post jobs, source, interview, and hire top talent. We've combined ATS & CRM into a single platform, Lever TRM. Our Talent Acquisition Suite also includes tools for recruitment marketing and analytics: Lever Nurture, Lever Advanced Analytics, and Lever Data Warehouse Sync. Our customers include Netflix, KPMG, Spotify, Talend, Cirque du Soleil, and over 5000 other customers.\r\n\r\nLever has raised $123 million in funding from Apax Digital, Adam Street Partners, Scale Venture Partn […trimmed for the fixture…]",
+     "one_liner": "Talent Acquisition Suite that combines ATS + Talent CRM",
+     "team_size": 225,
+     "industry": "B2B",
+     "subindustry": "B2B -> Recruiting and Talent",
+     "launched_at": 1336096858,
+     "tags": [
+      "SaaS",
+      "Human Resources",
+      "Talent Acquisition"
+     ],
+     "tags_highlighted": [],
+     "top_company": true,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Acquired",
+     "industries": [
+      "B2B",
+      "Recruiting and Talent"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "429"
+    },
+    {
+     "id": 412,
+     "name": "Clever",
+     "slug": "clever",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/76cc0d8c3947ddc3bc0b8b889117b3cf3dc00ba2.png",
+     "website": "https://clever.com",
+     "all_locations": "San Francisco, CA, USA",
+     "long_description": "Clever is a single platform for all of your digital learning programs. Founded in 2012, Clever was started by educators and technology professionals who knew that schools, teachers, and students could all benefit from the amazing learning software that was available, but key challenges stood in the way of accessing the technology. Today, half of K-12 schools in the U.S. use Clever to give students and teachers single sign-on access for any resource or file they need, and to automate software account setup and updates for district administrators. Clever gives teachers time to teach, helps distr […trimmed for the fixture…]",
+     "one_liner": "The platform that powers technology in the classroom.",
+     "team_size": 210,
+     "industry": "Education",
+     "subindustry": "Education",
+     "launched_at": 1336096710,
+     "tags": [
+      "Education",
+      "SaaS"
+     ],
+     "tags_highlighted": [],
+     "top_company": true,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Acquired",
+     "industries": [
+      "Education"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Partly Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "412"
+    },
+    {
+     "id": 414,
+     "name": "SmartAsset",
+     "slug": "smartasset",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/d79adb13b4acb20f9e08e876a7ad54319a3e7a10.png",
+     "website": "http://smartasset.com",
+     "all_locations": "Austin, TX, USA; Remote",
+     "long_description": "SmartAsset is an online destination for consumer-focused financial information and advice. Reaching approximately 59 million people each month (as of January 2024) through its educational content and personalized calculators and tools, SmartAsset's mission is to help people make smart financial decisions. \r\n\r\nAdditionally, SmartAsset powers SmartAsset AMP, a national marketplace connecting consumers to financial advisors. Building on SmartAsset’s relationship with millions of investors, SmartAsset AMP connects financial advisors directly with prospects who meet their target client profile. Our […trimmed for the fixture…]",
+     "one_liner": "Marketplace connecting consumers to financial advisors",
+     "team_size": 210,
+     "industry": "Fintech",
+     "subindustry": "Fintech -> Consumer Finance",
+     "launched_at": 1336096730,
+     "tags": [
+      "Fintech",
+      "Marketplace"
+     ],
+     "tags_highlighted": [],
+     "top_company": true,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Active",
+     "industries": [
+      "Fintech",
+      "Consumer Finance"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada",
+      "Remote",
+      "Fully Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "414"
+    },
+    {
+     "id": 469,
+     "name": "9gag",
+     "slug": "9gag",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/740a3abe05919cd6bb1c955dbff43d4c41dbb1d3.png",
+     "website": "http://9gag.com",
+     "all_locations": "Hong Kong, Hong Kong; Remote",
+     "long_description": "9GAG  is the global cross-platform entertainment media network. It is a place for fun, conversation, and engagement. Founded in 2008, 9GAG’s mission is to make the world happier. \r\n\r\n9GAG has a total of 150 million global audience with 39 million followers on Facebook, 44 million on Instagram and 15 million on Twitter. Being #1 ranked global social media platform in entertainment & gaming, #1 ranked US's cross-platform video creators, we distribute 2.2 billion social video views on a monthly basis (source: tubular labs). 9GAG.com is #6 most followed  brand on Instagram and is a top 200 website […trimmed for the fixture…]",
+     "one_liner": "Make the world happier.",
+     "team_size": 36,
+     "industry": "Consumer",
+     "subindustry": "Consumer -> Social",
+     "launched_at": 1340675177,
+     "tags": [
+      "Social Media",
+      "Social",
+      "Social Network"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Active",
+     "industries": [
+      "Consumer",
+      "Social"
+     ],
+     "regions": [
+      "Hong Kong",
+      "East Asia",
+      "Remote",
+      "Fully Remote"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "469"
+    },
+    {
+     "id": 464,
+     "name": "Plivo",
+     "slug": "plivo",
+     "former_names": [],
+     "small_logo_thumb_url": "https://bookface-images.s3.amazonaws.com/small_logos/7786f1c9837ea6e7696e60b95c00273cccbf9723.png",
+     "website": "https://plivo.com",
+     "all_locations": "Austin, TX, USA",
+     "long_description": "Plivo's platform helps businesses create and deploy Voice AI Agents for various roles like customer support, marketing engagement, lead qualification including channels like WhatsApp, Chat & SMS. Plivo's platform powers billions of transactions each year globally for thousands of businesses worldwide like Uber, Meta, Zomato, Godaddy etc.",
+     "one_liner": "Voice AI Agents for customer engagement, including WhatsApp, SMS &…",
+     "team_size": 320,
+     "industry": "B2B",
+     "subindustry": "B2B",
+     "launched_at": 1336694241,
+     "tags": [
+      "SMS",
+      "AI",
+      "AI Assistant"
+     ],
+     "tags_highlighted": [],
+     "top_company": false,
+     "isHiring": false,
+     "nonprofit": false,
+     "batch": "Summer 2012",
+     "status": "Active",
+     "industries": [
+      "B2B"
+     ],
+     "regions": [
+      "United States of America",
+      "America / Canada"
+     ],
+     "stage": "Growth",
+     "app_video_public": false,
+     "demo_day_video_public": false,
+     "app_answers": null,
+     "question_answers": false,
+     "objectID": "464"
+    }
+   ],
+   "nbHits": 8,
+   "page": 0,
+   "nbPages": 1,
+   "hitsPerPage": 1000,
+   "index": "YCCompany_production",
+   "params": "query=&hitsPerPage=1000&page=0&facetFilters=[[\"batch:Summer 2012\"]]"
+  }
+ ]
+}

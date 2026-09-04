@@ -1013,3 +1013,127 @@ async def test_default_clock_and_sleep_really_wait(router: respx.MockRouter) -> 
         await client.get("https://example.com/2")
         elapsed = time.monotonic() - started
     assert elapsed >= 0.045
+
+
+# ------------------------------------------------------------------ HEAD and POST (Phase 3)
+
+
+async def test_head_sends_a_head_request_and_follows_redirects(
+    router: respx.MockRouter, clock: FakeClock
+) -> None:
+    """SPEC §10's seed-domain validation: HEAD, redirects followed, under the same rules as
+    ``get`` — robots first, then the rate limit."""
+    robots(router, "example.com")
+    robots(router, "www.example.com")
+    router.head("https://example.com/").mock(
+        return_value=httpx.Response(301, headers={"Location": "https://www.example.com/"})
+    )
+    final = router.head("https://www.example.com/").mock(return_value=httpx.Response(200))
+    async with make_client(clock) as client:
+        response = await client.head("https://example.com/")
+    assert final.called
+    assert response.status_code == 200
+    assert str(response.request.url) == "https://www.example.com/"
+    assert {call.request.method for call in router.calls if call.request.method != "GET"} == {
+        "HEAD"
+    }
+
+
+async def test_head_honours_robots_txt(router: respx.MockRouter, clock: FakeClock) -> None:
+    robots(router, "example.com", body="User-agent: *\nDisallow: /\n")
+    probe = router.head("https://example.com/")
+    async with make_client(clock) as client:
+        with pytest.raises(RobotsDisallowed):
+            await client.head("https://example.com/")
+    assert not probe.called
+
+
+async def test_head_neither_reads_nor_writes_the_cache(
+    router: respx.MockRouter, clock: FakeClock
+) -> None:
+    """A HEAD has no body to store, and storing its validators would let a later ``get`` be
+    answered by a 304 with no body at all."""
+    robots(router, "example.com")
+    router.head("https://example.com/").mock(
+        return_value=httpx.Response(200, headers={"ETag": '"v1"'})
+    )
+    page = router.get("https://example.com/").mock(
+        return_value=httpx.Response(200, text="body", headers={"ETag": '"v1"'})
+    )
+    cache = MemoryCache()
+    async with make_client(clock, cache=cache) as client:
+        await client.head("https://example.com/")
+        assert len(cache) == 0
+        response = await client.get("https://example.com/")
+    assert response.text == "body"
+    assert len(cache) == 1
+    # The GET was a full request, not a conditional one built from the HEAD's validator.
+    assert "if-none-match" not in page.calls.last.request.headers
+
+
+async def test_post_json_sends_the_body_and_headers(
+    router: respx.MockRouter, clock: FakeClock
+) -> None:
+    """``ycombinator`` posts its query to Algolia with the credentials in headers."""
+    robots(router, "search.example")
+    route = router.post("https://search.example/1/indexes/*/queries").mock(
+        return_value=httpx.Response(200, json={"results": [{"hits": []}]})
+    )
+    async with make_client(clock) as client:
+        payload = await client.post_json(
+            "https://search.example/1/indexes/*/queries",
+            content='{"requests": []}',
+            headers={"X-Algolia-API-Key": "secret"},
+        )
+    assert payload == {"results": [{"hits": []}]}
+    request = route.calls.last.request
+    assert request.method == "POST"
+    assert request.content == b'{"requests": []}'
+    assert request.headers["X-Algolia-API-Key"] == "secret"
+    assert "secret" not in str(request.url)
+
+
+async def test_post_is_never_cached(router: respx.MockRouter, clock: FakeClock) -> None:
+    robots(router, "search.example")
+    router.post("https://search.example/q").mock(
+        return_value=httpx.Response(200, json={"n": 1}, headers={"ETag": '"v1"'})
+    )
+    cache = MemoryCache()
+    async with make_client(clock, cache=cache) as client:
+        await client.post_json("https://search.example/q", content="{}")
+        await client.post_json("https://search.example/q", content="{}")
+    assert len(cache) == 0
+    assert len([call for call in router.calls if call.request.method == "POST"]) == 2
+
+
+async def test_a_post_redirect_is_returned_not_followed(
+    router: respx.MockRouter, clock: FakeClock
+) -> None:
+    """Re-posting a body to a new location is a decision no client should make silently."""
+    robots(router, "search.example")
+    router.post("https://search.example/q").mock(
+        return_value=httpx.Response(307, headers={"Location": "https://elsewhere.example/q"})
+    )
+    elsewhere = router.post("https://elsewhere.example/q")
+    async with make_client(clock) as client:
+        response = await client.request("POST", "https://search.example/q", content="{}")
+    assert response.status_code == 307
+    assert not elsewhere.called
+
+
+async def test_robots_disallowed_distinguishes_unreachable_from_refused(
+    router: respx.MockRouter, clock: FakeClock
+) -> None:
+    """The seed loader treats an unreachable host as a dead domain and a host that answered
+    "no" as alive (SPEC §10), so the exception has to say which happened."""
+    robots(router, "refused.example", body="User-agent: *\nDisallow: /\n")
+    robots(router, "down.example", status=503)
+    async with make_client(clock, max_attempts=1) as client:
+        with pytest.raises(RobotsDisallowed) as refused:
+            await client.get("https://refused.example/")
+        with pytest.raises(RobotsDisallowed) as unreachable:
+            await client.get("https://down.example/")
+    assert refused.value.reason == "disallowed"
+    assert "disallows" in str(refused.value)
+    assert unreachable.value.reason == "unreachable"
+    assert "could not be read" in str(unreachable.value)

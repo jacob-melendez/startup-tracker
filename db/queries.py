@@ -8,7 +8,10 @@ the ingest pipeline (:mod:`ingest.pipeline`) runs at well-defined points of a ru
   ``Company.latest_round_id`` / ``open_job_count`` / ``latest_job_posted_at`` (SPEC §5);
 * :func:`last_successful_run_started_at` — the incremental-window anchor (SPEC §7.2, §14.3);
 * :func:`close_missing_jobs` — marks jobs that vanished from their source as closed, never
-  deleting them (SPEC §2, §5).
+  deleting them (SPEC §2, §5);
+* :func:`load_company_targets` — the pre-loaded work list for the connectors that enrich
+  companies already in the database instead of discovering new ones (SPEC §4 Tier 1 #3,
+  Tier 3).
 
 Phase 4 adds the company-list query (SPEC §9) here.
 """
@@ -21,9 +24,11 @@ from typing import Any, cast
 
 from sqlalchemy import CursorResult, and_, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from db import enums
-from db.models import Company, FetchRun, FundingRound, Job, Source
+from db.models import Company, CompanySource, FetchRun, FundingRound, Job, Source
+from ingest.base import CompanyTarget
 
 #: ``FetchRun`` statuses whose fetch scanned its whole window (SPEC §7.2). A ``partial`` run
 #: had per-item trouble but did finish scanning, so the next incremental window may start
@@ -96,6 +101,66 @@ async def refresh_company_denormalized_columns(
     result = cast("CursorResult[Any]", await session.execute(stmt))
     updated: int = result.rowcount
     return updated
+
+
+async def load_company_targets(
+    session: AsyncSession, connector: str, *, statuses: Sequence[enums.CompanyStatus] | None = None
+) -> list[CompanyTarget]:
+    """The work list for a connector that *enriches* companies rather than discovering them
+    (design decision 5): the four ATS connectors and ``company_site``.
+
+    Shape — one ``SELECT`` over ``companies`` with an **outer join** to this connector's own
+    ``company_sources`` row, so a company the connector has never visited still comes back
+    (with ``external_id`` and ``last_seen_at`` NULL) instead of being filtered out by an inner
+    join. Ordering is ``last_seen_at ASC NULLS FIRST, id`` — never-visited companies first,
+    then the least recently visited — which is what makes a per-run cap (``company_site``
+    visits at most N companies a night, SPEC §4 Tier 3) round-robin the whole database instead
+    of hammering the same first N every time.
+
+    ``statuses`` defaults to ``active`` only: there is no point fetching the careers page of a
+    company the seed loader marked ``dead`` (SPEC §10). Pass an explicit sequence to widen it.
+
+    This lives here rather than in a connector because SPEC §11 and ``ingest/base.py`` keep
+    connectors free of database access: :func:`ingest.pipeline.run_connector` runs this once
+    per run and hands the result over in ``FetchContext.targets``.
+    """
+    wanted = tuple(statuses) if statuses is not None else (enums.CompanyStatus.ACTIVE,)
+    source = aliased(CompanySource)
+    rows = await session.execute(
+        select(
+            Company.id,
+            Company.name,
+            Company.domain,
+            Company.website_url,
+            Company.status,
+            Company.ats_provider,
+            Company.ats_token,
+            source.external_id,
+            source.last_seen_at,
+        )
+        .outerjoin(
+            source,
+            and_(source.company_id == Company.id, source.connector == connector),
+        )
+        .where(Company.status.in_(wanted))
+        .order_by(source.last_seen_at.asc().nulls_first(), Company.id)
+    )
+    return [
+        CompanyTarget(
+            company_id=row.id,
+            name=row.name,
+            domain=row.domain,
+            website_url=row.website_url,
+            status=enums.CompanyStatus(row.status),
+            ats_provider=(
+                enums.AtsProvider(row.ats_provider) if row.ats_provider is not None else None
+            ),
+            ats_token=row.ats_token,
+            external_id=row.external_id,
+            last_seen_at=row.last_seen_at,
+        )
+        for row in rows
+    ]
 
 
 async def last_successful_run_started_at(session: AsyncSession, connector: str) -> datetime | None:

@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /search?q=*
+
+Sitemap: https://sourcegraph.com/sitemap.xml
