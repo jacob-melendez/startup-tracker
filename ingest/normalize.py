@@ -212,15 +212,31 @@ async def resolve_company(session: AsyncSession, key: ResolutionKey) -> Resoluti
     is skipped entirely.
     """
     if key.external_id is not None:
-        company_id = await session.scalar(
-            select(CompanySource.company_id).where(
+        # ``limit(2)``: the (connector, external_id) pair is not unique in the schema — the
+        # primary key is (company_id, connector) — and an ATS board token can legitimately be
+        # shared, as when a parent and a subsidiary link to the same board. Two matches mean
+        # the identifier does not identify anybody, so the step falls through to the domain
+        # rather than picking whichever row the planner happened to return first.
+        rows = await session.execute(
+            select(CompanySource.company_id)
+            .where(
                 CompanySource.connector == key.connector,
                 CompanySource.external_id == key.external_id,
             )
+            .order_by(CompanySource.company_id)
+            .limit(2)
         )
-        if company_id is not None:
-            log.debug("resolved", step="external_id", company_id=company_id)
-            return Resolution(company_id, "external_id")
+        matches = [row.company_id for row in rows]
+        if len(matches) == 1:
+            log.debug("resolved", step="external_id", company_id=matches[0])
+            return Resolution(matches[0], "external_id")
+        if matches:
+            log.info(
+                "ambiguous external_id ignored",
+                connector=key.connector,
+                external_id=key.external_id,
+                companies=matches,
+            )
 
     if key.domain is not None:
         company_id = await session.scalar(select(Company.id).where(Company.domain == key.domain))

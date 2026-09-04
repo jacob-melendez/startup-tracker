@@ -517,3 +517,34 @@ async def test_resolution_then_recording_never_merges_companies(session: AsyncSe
     assert await _company_count(session) == 2
     # And the next arrival of the same record resolves to the created company by name.
     assert await resolve_company(session, key) == Resolution(created.id, "name")
+
+
+async def test_an_external_id_shared_by_two_companies_resolves_to_neither(
+    session: AsyncSession,
+) -> None:
+    """The (connector, external_id) pair is not unique in the schema — the primary key is
+    (company_id, connector) — and an ATS board token can legitimately be shared by a parent and
+    a subsidiary. Two matches mean the identifier identifies nobody, so step 0 falls through to
+    the domain instead of picking a row at random."""
+    sf = await _location(session, "San Francisco", "CA", BAY_AREA)
+    await _company(session, "Parent", location=sf, source=("greenhouse", "sharedtoken"))
+    subsidiary = await _company(
+        session, "Subsidiary", domain="subsidiary.com", source=("greenhouse", "sharedtoken")
+    )
+
+    ambiguous = await resolve_company(
+        session, _key(connector="greenhouse", external_id="sharedtoken", normalized_name="x")
+    )
+    assert ambiguous == Resolution(None, None, ())
+
+    # ... and a record that also knows its domain still resolves, through step 1.
+    with_domain = await resolve_company(
+        session,
+        _key(
+            connector="greenhouse",
+            external_id="sharedtoken",
+            domain="subsidiary.com",
+            normalized_name="subsidiary",
+        ),
+    )
+    assert with_domain == Resolution(subsidiary.id, "domain", ())
