@@ -40,6 +40,7 @@ from ingest.connectors.company_site import CompanySiteConnector
 from ingest.connectors.funding_rss import FundingRssConnector
 from ingest.connectors.greenhouse import GreenhouseConnector
 from ingest.connectors.hn_hiring import HnHiringConnector
+from ingest.contacts import people_search_url
 from ingest.http import HttpClient
 from ingest.pipeline import run_connector
 from ingest.seed import SeedConnector, SeedFile
@@ -421,9 +422,33 @@ async def test_company_site_enriches_a_seeded_company(
     company = await company_by_domain(session_factory, "astranis.com")
     assert company.one_liner is not None and company.one_liner.startswith("Astranis designs")
     async with session_factory() as session:
-        contacts = (await session.scalars(select(Contact))).all()
-    assert [(c.kind, c.confidence) for c in contacts] == [
-        (enums.ContactKind.CAREERS_PAGE, enums.ContactConfidence.PUBLISHED)
+        contacts = (await session.scalars(select(Contact).order_by(Contact.kind))).all()
+    # SPEC §6 end to end, through a real Postgres: everything the fixture's own footer publishes
+    # is `published`, and the one link nothing published — the people search — is `constructed`.
+    # The footer's `linkedin.com/company/astranis/` is exactly what the domain would construct,
+    # so the constructed row the seed run wrote is promoted in place rather than duplicated.
+    assert [(c.kind, c.confidence, c.value) for c in contacts] == [
+        (
+            enums.ContactKind.LINKEDIN_COMPANY,
+            enums.ContactConfidence.PUBLISHED,
+            "https://www.linkedin.com/company/astranis",
+        ),
+        (
+            enums.ContactKind.LINKEDIN_PEOPLE,
+            enums.ContactConfidence.CONSTRUCTED,
+            people_search_url("Astranis"),
+        ),
+        (
+            enums.ContactKind.CAREERS_PAGE,
+            enums.ContactConfidence.PUBLISHED,
+            "https://astranis.com/careers",
+        ),
+        (enums.ContactKind.X, enums.ContactConfidence.PUBLISHED, "https://x.com/Astranis"),
+        (
+            enums.ContactKind.CONTACT_FORM,
+            enums.ContactConfidence.PUBLISHED,
+            "https://astranis.com/contact",
+        ),
     ]
     # No new company was invented by a Tier-3 visit.
     assert await count(session_factory, Company) == 1

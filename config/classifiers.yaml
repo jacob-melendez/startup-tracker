@@ -217,3 +217,45 @@ funding:
       any: [grant, non-dilutive award, sbir]
     - type: seed
       any: [seed round, seed funding, seed extension, seed investment, seed]
+
+# --------------------------------------------------------------------------------- contacts
+# Vocabulary for SPEC §6 (`ingest/contacts.py`). Nothing here is scraped from LinkedIn: the
+# search terms build a deep link the user clicks, and the role rules read a title the company
+# published next to a person's name on its own team page.
+contacts:
+  # SPEC §6 "People search": the title keywords the constructed people-search link filters on,
+  # written exactly as §6 spells the expression —
+  #   founder OR recruiter OR "head of engineering" OR "talent"
+  # Quoting is per term and part of its meaning: a quoted term is matched as an exact phrase,
+  # an unquoted one may be stemmed by the search engine. `ingest/contacts.py` passes a quoted
+  # term through verbatim and quotes any bare term that contains a space, so a phrase added here
+  # without quotes can never fall apart into two OR operands.
+  people_search_terms: [founder, recruiter, '"head of engineering"', '"talent"']
+  # SPEC §5 `Person.role_type` (founder/exec/recruiter/eng_lead), read from a published title.
+  # Ordered, first match wins, like every block above. The order is deliberate: founder before
+  # exec so "CEO & Founder" is a founder, and eng_lead before exec so "VP of Engineering" is an
+  # engineering lead rather than a generic executive. No match leaves `role_type` NULL — a role
+  # type is never guessed from a name or a link.
+  #
+  # Recruiter also before exec, so a "VP, Human Resources" or a "Chief People Officer" is the
+  # person to write to about a role rather than one more executive — which is the whole point of
+  # storing a person at all (SPEC §1). The vocabulary mirrors the `people` role_family block
+  # above, which already reads `hr`, `human resources` and `talent` as the recruiting function.
+  #
+  # `founding` is deliberately not a bare keyword: "Founding Engineer", "Founding Designer" and
+  # "Founding Member of Technical Staff" name an early employee, not someone who founded the
+  # company, and NULL is the honest answer for them. The `seniority` block above draws the same
+  # line for job titles, where "founding engineer" is an executive-level title of its own.
+  person_role_type:
+    - type: founder
+      any: [founder, co-founder, cofounder, founding partner]
+    - type: recruiter
+      any: [recruiter, recruiting, talent acquisition, talent partner, sourcer, head of talent,
+            people operations, people ops, head of people, chief people officer,
+            human resources, hr]
+    - type: eng_lead
+      any: [head of engineering, vp engineering, vp of engineering, director of engineering,
+            engineering manager, head of infrastructure, chief technology officer, cto]
+    - type: exec
+      any: [ceo, chief executive, coo, cfo, cro, cmo, chief, president, vp, vice president,
+            head of, general manager]

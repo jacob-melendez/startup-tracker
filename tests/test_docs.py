@@ -89,3 +89,37 @@ def test_the_excluded_sources_are_named() -> None:
     for excluded in ("linkedin", "crunchbase", "wellfound"):
         assert excluded in text
     assert "guessed" in text or "smtp" in text
+
+
+# ------------------------------------------------- SPEC §6 claims the code has to keep
+
+
+def test_the_constructed_links_are_documented_with_the_scope_the_code_gives_them() -> None:
+    """SPEC §6's two constructed links are built by ``_ensure_constructed_contacts``, whose only
+    caller is ``upsert_company_record``. A company therefore gets them when it is *upserted* —
+    not because it exists. The document said "for **every company in the database**", which is
+    false of any database carried over from an earlier phase: a company no connector re-lists (an
+    aged-out ``funding_rss`` article, a Form D outside the incremental window, a seeded row —
+    ``seed`` is not in ``refresh --all``) is never passed to the upsert, nothing backfills it,
+    and a row with no ``website_url`` is skipped by ``company_site`` on every run for ever.
+
+    The reader this protects is upgrading a database and deciding whether to expect the links.
+    """
+    text = SOURCES.read_text(encoding="utf-8")
+    assert "every company in the database" not in text
+    assert "on **every company upsert**" in text
+    assert "nothing\nbackfills the remainder" in text, "the upgrade case must be stated"
+
+
+def test_the_document_does_not_claim_an_unchanged_site_rewrites_nothing() -> None:
+    """``_upsert_contacts`` is ``ON CONFLICT DO UPDATE SET confidence, source_id``, so a second
+    visit to a byte-identical page rewrites every published row's ``source_id`` to the newer
+    run. Only the *constructed* rows, inserted ``DO NOTHING``, are genuinely untouched.
+
+    The stable contact order is real and worth documenting, but it is not the reason: each
+    contact is upserted independently on ``(company_id, kind, value)``, so order decides which
+    contacts survive the per-company caps, never whether a row is written.
+    """
+    text = SOURCES.read_text(encoding="utf-8")
+    assert "rewrites nothing" not in text
+    assert "refreshes that row's `source_id`" in text

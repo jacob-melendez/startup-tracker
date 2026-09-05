@@ -17,7 +17,7 @@ import html
 import re
 from collections.abc import Iterator
 
-from selectolax.parser import HTMLParser
+from selectolax.parser import HTMLParser, Node
 
 #: Elements whose text is markup furniture, never prose.
 _INVISIBLE = ("script", "style", "noscript", "template", "svg")
@@ -103,9 +103,22 @@ def page_title(markup: str) -> str | None:
     return title or None
 
 
-def iter_links(markup: str) -> Iterator[str]:
-    """Every non-empty ``href`` in document order, entities already unescaped."""
+def iter_anchors(markup: str) -> Iterator[tuple[Node, str]]:
+    """Every ``<a>`` with a non-empty ``href``, in document order, with the href unescaped.
+
+    The node comes back alongside the href for the callers that need the anchor's own text or
+    its position in the document — SPEC §6's person extraction reads the name printed beside a
+    profile link (:func:`ingest.contacts.extract_people`). :func:`iter_links` is this function
+    for the callers that only want the URL; both walk anchors and nothing else, so the two can
+    never disagree about which href a page contains.
+    """
     for node in HTMLParser(markup).css("a"):
         href = node.attributes.get("href")
         if href and href.strip():
-            yield html.unescape(href.strip())
+            yield node, html.unescape(href.strip())
+
+
+def iter_links(markup: str) -> Iterator[str]:
+    """Every non-empty ``href`` in document order, entities already unescaped."""
+    for _, href in iter_anchors(markup):
+        yield href

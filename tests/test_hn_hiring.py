@@ -266,6 +266,21 @@ def test_emails_the_poster_wrote_are_extracted() -> None:
     assert extract_emails("no address here") == []
 
 
+def test_an_address_a_poster_capitalised_is_stored_in_the_one_published_form() -> None:
+    """SPEC §6 allows two sources for a published address — a ``mailto:`` on the company's own
+    site and an address a founder posted here — and they must store it identically.
+
+    ``company_site`` reads ``mailto:HR@atom-computing.com`` off the careers page and stores
+    ``hr@atom-computing.com``; a comment writing the same address with capitals has to land on
+    that row. ``uq_contacts_company_id_kind_value`` is a plain unique on the value and
+    ``_upsert_contacts`` stores it verbatim, so an address normalised on one side and not the
+    other is two "Published" rows for one address in the panel — and the same inside a single
+    comment that writes it twice.
+    """
+    assert extract_emails("Write HR@Atom-Computing.com") == ["hr@atom-computing.com"]
+    assert extract_emails("Mail jobs@acme.com or JOBS@ACME.COM.") == ["jobs@acme.com"]
+
+
 def test_role_bullets_become_extra_jobs() -> None:
     text = (
         "- Data Labeling Intern: https://example.com/a\n"

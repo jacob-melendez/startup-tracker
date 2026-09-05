@@ -100,6 +100,13 @@ connectors:
       max_companies_per_run: 40
       depth_one_paths: [careers, jobs, about, team]   # SPEC §4 Tier 3, depth 1 only
       min_revisit_days: 6
+      # SPEC §6: how much of what a company published about reaching it is kept per company.
+      # Both are read off pages already fetched, so neither costs a request. Everything this
+      # connector stores is confidence='published'; the constructed LinkedIn company link and
+      # the "Find people →" search link are built by the pipeline on EVERY company upsert, not
+      # here — so they cover companies this connector has never visited.
+      max_emails_per_company: 10      # published mailto: addresses; 0 stores none
+      max_people_per_company: 25      # people named on a published team page; 0 stores none
 
   opencorporates:
     cadence: null                   # on-demand only — enrichment, not discovery (not implemented)

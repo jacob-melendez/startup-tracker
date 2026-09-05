@@ -11,7 +11,9 @@ Four claims, each of which is a checkbox in §13 rather than a unit of behaviour
 * **"No web request handler makes an outbound HTTP call."** Proved twice over: statically, by
   walking every module under ``web/`` with :mod:`ast` for a forbidden import, and dynamically,
   by driving a full request cycle inside ``respx.mock`` with no routes registered, where any
-  outbound call would raise.
+  outbound call would raise. The company that cycle runs against carries a full SPEC §6
+  contacts block, because that is where the app now holds ``linkedin.com`` URLs and §4 forbids
+  ever fetching one: rendering a link to a page must stay a strictly local act.
 * **The stated front-end budget** (SPEC §9, CLAUDE.md): one hand-written stylesheet under 200
   lines, no external origin in the page chrome, no JavaScript framework and no build step.
 * **"The company list renders in under 200 ms with 5,000 companies and 20,000 jobs."**
@@ -36,7 +38,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db import enums
-from db.models import Company, Job
+from db.models import Company, Job, Person
 from db.queries import PAGE_SIZE, company_list_page, refresh_company_denormalized_columns
 from tests.support_web import (
     DAY,
@@ -46,6 +48,7 @@ from tests.support_web import (
     flatten,
     job_ids,
     make_company,
+    make_contact,
     make_job,
     next_link,
     refresh_denormalized,
@@ -229,9 +232,37 @@ async def test_a_full_request_cycle_makes_no_outbound_call(
     respx patches httpcore's connection pools, which is exactly the layer an outbound ``httpx``
     call would go through; the ASGI transport this client uses does not touch it, so the app is
     still driven for real while the network is armed to fail.
+
+    The company is given the whole SPEC §6 contacts block on purpose. Three of the URLs the
+    panel now renders point at ``linkedin.com``, which SPEC §4 lists among the sources this
+    project must never fetch — the constructed people search is not even a page that exists
+    until someone clicks it — so the code path that builds those anchors is exactly the one
+    worth running with the network armed to fail.
     """
     company = await make_company(session, "Offline Co", website_url="https://offline.example")
     job = await make_job(session, company, "Engineer", url="https://offline.example/jobs/1")
+    for kind, value, confidence in (
+        (
+            enums.ContactKind.LINKEDIN_COMPANY,
+            "https://www.linkedin.com/company/offline-co",
+            enums.ContactConfidence.PUBLISHED,
+        ),
+        (
+            enums.ContactKind.LINKEDIN_PEOPLE,
+            "https://www.linkedin.com/search/results/people/?keywords=%22Offline+Co%22",
+            enums.ContactConfidence.CONSTRUCTED,
+        ),
+    ):
+        await make_contact(session, company, kind=kind, value=value, confidence=confidence)
+    session.add(
+        Person(
+            company_id=company.id,
+            full_name="Robin Vega",
+            title="Founder",
+            role_type=enums.RoleType.FOUNDER,
+            linkedin_url="https://www.linkedin.com/in/robin-vega",
+        )
+    )
     await session.commit()
 
     with respx.mock(assert_all_called=False) as router:
@@ -244,8 +275,17 @@ async def test_a_full_request_cycle_makes_no_outbound_call(
             "/healthz",
             "/static/styles.css",
         ]
+        rendered: dict[str, str] = {}
         for path in pages:
-            assert (await client.get(path)).status_code == 200, path
+            response = await client.get(path)
+            assert response.status_code == 200, path
+            rendered[path] = response.text
+        # The contacts block really did render inside the trap — an empty one would make the
+        # empty call list below true for the wrong reason.
+        for path in (f"/company/{company.id}", f"/company/{company.id}/panel"):
+            assert "linkedin.com/company/offline-co" in rendered[path], path
+            assert "linkedin.com/in/robin-vega" in rendered[path], path
+            assert "Find people" in rendered[path], path
         posted = await client.post(
             f"/company/{company.id}/note",
             data={"status": "interested", "rating": "3", "note": "no network here"},

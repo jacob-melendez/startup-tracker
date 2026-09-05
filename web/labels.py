@@ -10,6 +10,8 @@ would silently stop matching a keyword.
 The ``*_ORDER`` tuples are the select-option order: the enum's declaration order (which is the
 funding ladder for stages and the SPEC §7.1 table order for role families), with the ``other`` /
 ``unknown`` fallbacks pushed to the end where a reader expects them.
+:data:`CONTACT_KIND_ORDER` is the exception — it orders a rendered list rather than a select,
+so it is written out by hand rather than derived from the enum.
 """
 
 from __future__ import annotations
@@ -75,11 +77,30 @@ ROLE_TYPE_LABELS: dict[enums.RoleType, str] = {
 CONTACT_KIND_LABELS: dict[enums.ContactKind, str] = {
     enums.ContactKind.EMAIL: "Email",
     enums.ContactKind.LINKEDIN_COMPANY: "LinkedIn",
+    # SPEC §6 names this one in the UI's own words: it is the "Find people →" button, not a
+    # second LinkedIn URL, and calling it "LinkedIn people search" would bury that.
+    enums.ContactKind.LINKEDIN_PEOPLE: "Find people",
     enums.ContactKind.CAREERS_PAGE: "Careers page",
     enums.ContactKind.X: "X",
     enums.ContactKind.GITHUB: "GitHub",
     enums.ContactKind.CONTACT_FORM: "Contact form",
 }
+
+#: The order the panel lists contacts in, within each confidence group (SPEC §9's contacts
+#: block). Usefulness first — an address you can write to, then the page you apply on, then the
+#: company's own accounts — with ``linkedin_people`` last because it is the search shortcut the
+#: reader falls back to when nothing above it exists. Not derived from the enum's declaration
+#: order: that order mirrors the Postgres type, which migration ``0002`` fixed for storage
+#: reasons and which has nothing to say about reading.
+CONTACT_KIND_ORDER: tuple[enums.ContactKind, ...] = (
+    enums.ContactKind.EMAIL,
+    enums.ContactKind.CAREERS_PAGE,
+    enums.ContactKind.LINKEDIN_COMPANY,
+    enums.ContactKind.X,
+    enums.ContactKind.GITHUB,
+    enums.ContactKind.CONTACT_FORM,
+    enums.ContactKind.LINKEDIN_PEOPLE,
+)
 
 CONTACT_CONFIDENCE_LABELS: dict[enums.ContactConfidence, str] = {
     # SPEC §6: the UI must make it obvious which of these two a value is.

@@ -3,8 +3,8 @@
 Every connector test replays these with `respx`; nothing in the suite touches the network (an
 un-mocked request fails the test, and the whole suite passes under
 `HTTPS_PROXY=http://127.0.0.1:9`). `sec_edgar/README.md` documents the Phase 2 fixtures; this
-file covers the Phase 3 ones, all recorded on **2026-09-04** with the User-Agent the app sends,
-`startup-tracker/0.1 startup-tracker@example.com`.
+file covers the Phase 3 and Phase 5 ones, all recorded on **2026-09-04** with the User-Agent the
+app sends, `startup-tracker/0.1 startup-tracker@example.com`, `robots.txt` checked first.
 
 Payloads are unmodified except where noted. Boards and feeds are **trimmed** — a live Greenhouse
 board is 168 KB and Databricks' is 9.4 MB — by keeping a spread of role families and truncating
@@ -82,11 +82,39 @@ be added to `funding_rss.options.feeds` in `config/connectors.yaml`.
 
 ## Company sites — Tier 3 (SPEC §4 Tier 3)
 
-| file | source |
-|---|---|
-| `company_site/astranis_home.html`, `astranis_careers.html`, `astranis_robots.txt` | `astranis.com` — a home page whose only depth-1 match is `/careers`, and a careers page that links on to Greenhouse |
-| `company_site/sourcegraph_home.html`, `sourcegraph_robots.txt` | `sourcegraph.com` — `og:description` and `description` both present; robots disallows only `/search?q=*` |
-| `company_site/wordpress_crawl_delay_robots.txt` | `atom-computing.com/robots.txt` — a Yoast file with a `Crawl-delay: 10` line **before** any `User-agent`, which RFC 9309 says belongs to no group |
+| file | source | the trap it encodes |
+|---|---|---|
+| `company_site/astranis_home.html`, `astranis_careers.html`, `astranis_robots.txt` | `astranis.com` | a home page whose only depth-1 match is `/careers`, and a careers page that links on to Greenhouse |
+| `company_site/sourcegraph_home.html`, `sourcegraph_robots.txt` | `sourcegraph.com` | `og:description` and `description` both present; robots disallows only `/search?q=*` |
+| `company_site/wordpress_crawl_delay_robots.txt` | `atom-computing.com/robots.txt` | a Yoast file with a `Crawl-delay: 10` line **before** any `User-agent`, which RFC 9309 says belongs to no group |
 
-`atom-computing.com` itself answers **403** to this User-Agent (Cloudflare), which is why the
-seed loader treats a 403 as "the host is alive" rather than as a dead domain (SPEC §10).
+### Contacts, social links and people (SPEC §6, Phase 5)
+
+Each of these is a **second trim of the same recording** — the Phase 3 rows above kept the metas
+and depth-1 links, these keep the anchors SPEC §6 reads. `astranis_home.html` and
+`sourcegraph_home.html` were extended in place; their metas and depth-1 links are untouched.
+
+Two deviations from "unmodified", both deliberate. `sourcegraph_home.html`'s two depth-1 anchors
+(`/about`, `/jobs`) kept the Phase 3 trim's placeholder body `link` rather than the recorded
+`About` and `Careers`; every other anchor in these files is verbatim. And where a recording
+repeats one anchor across several columns or breakpoints — `twelve.co` prints `/contact` in both
+its footer and its mobile menu — only one copy is kept, since dedupe is exercised across *pages*
+by the three `atom_computing_*` files rather than within one.
+
+| file | source | the trap it encodes |
+|---|---|---|
+| `company_site/astranis_home.html` | `www.astranis.com/` | Webflow renders **no `<footer>` element at all** — the social column is a plain `<div class="social-link footernew">`, so extraction cannot look for a footer subtree. The LinkedIn href is `www.linkedin.com/company/astranis/` **with a trailing slash**: canonicalised it equals the URL SPEC §6 constructs from `astranis.com`, which is the case where a published row must *replace* the constructed one in place rather than sit beside it. Also `/contact` (a same-domain contact form), `twitter.com/Astranis`, Instagram and YouTube — and **no `mailto:` anywhere on the site** |
+| `company_site/sourcegraph_home.html` | `sourcegraph.com/` | the real `<footer>`; each social anchor's only child is an `<svg>`, so the anchor text is **empty** and the account exists only in the href. LinkedIn is the numeric company id `www.linkedin.com/company/4803356/`, which can never equal the constructed `…/company/sourcegraph` — the published/constructed reconciliation case where the two values genuinely differ. Plus `github.com/sourcegraph` and `x.com/Sourcegraph`, and the pair `docs/SOURCES.md` states the contact-form rule with: the nav's `/contact/request-info` demo CTA comes first in the document and the footer's `/contact` second, so only a **shallowest**-wins rule picks `/contact` |
+| `company_site/atom_computing_home.html` | `atom-computing.com/` | **no description meta of any kind**, so the one-liner falls back to the title. Every nav href is absolute with a trailing slash, so the depth-1 links are `…/about-us/` then `…/careers/` in that order — the two pages below are exactly what a three-page visit fetches. Carries the same footer social block as every other page on the site, which is how cross-page contact dedupe gets exercised |
+| `company_site/atom_computing_careers.html` | `atom-computing.com/careers` | **`mailto:HR@atom-computing.com`** — an uppercase local part, the only published address on the whole site, and the reason addresses are lowercased before storage (`hn_hiring` writes them lowercase). The Oxygen builder emits **single-quoted attributes**, so a raw-markup `href="…"` regex finds none of the social links; the Twitter href carries a `?lang=en` query string; and every social anchor's visible text is `Visit our …` from an `<svg><title>`, never a name |
+| `company_site/atom_computing_about.html` | `atom-computing.com/about-us/` | the people case, trimmed from 12 profile links to the first three Executive Leadership cards. **All three anchors have the same text, "Visit our LinkedIn"**, so the name must come from the card's `<h3>`; walking one ancestor too far up hands all three the `<h2>Executive Leadership</h2>` above them, which is why a name claimed by more than one profile URL is dropped as a heading. The name carries a trailing credential (`Ben Bloom, PhD`); the title is the **next sibling `<div>`**, not the `Read Bio` anchor that follows it, and contains a zero-width space (U+200B) plus, on the second card, `&nbsp;` and a `<br>`; `Read Bio` points at the literal href `http://`, a URL with no host |
+| `company_site/twelve_home.html` | `twelve.co/` | `https://github.com/wix/yoshi/issues/2689` appears in a bundled Wix stylesheet's comment and **is not an anchor** — the regression case for parsing `<a href>` values instead of raw markup. Its LinkedIn href has both a `?viewAsMember=true` query string and a trailing slash, and the published slug `twelveco2` is one the domain `twelve.co` could never produce (`twelve`) — which also covers the `.co` TLD in the slug rule. Its second footer column supplies an **absolute** same-domain `/contact`, the counterpart to astranis's relative one |
+
+Two things the recordings do **not** contain, so a test that needs them must use hand-written
+markup and say so: a `mailto:?subject=…` share widget (none of the seven pages recorded on
+2026-09-04 has one — `atom-computing.com/careers` holds the set's only `mailto:` at all), and a
+`linkedin.com/in/` link outside a person card.
+
+`atom-computing.com` sits behind Cloudflare and **sometimes answers 403** to this User-Agent —
+it did while Phase 3 was recorded, which is why the seed loader treats a 403 as "the host is
+alive" rather than as a dead domain (SPEC §10). The Phase 5 recording got through.

@@ -20,6 +20,7 @@ from ingest.classify import (
     CLASSIFIERS_YAML,
     Classification,
     classify,
+    classify_person_role,
     classify_round_type,
     is_funding_announcement,
     load_classifiers,
@@ -389,11 +390,80 @@ def test_pre_seed_wins_over_seed() -> None:
     assert (round_type, keyword) == (enums.RoundType.PRE_SEED, "pre-seed")
 
 
+# ------------------------------------------------------------------ contacts vocabulary
+
+
+def test_every_role_type_has_a_rule() -> None:
+    """SPEC §5 ``Person.role_type`` is founder/exec/recruiter/eng_lead, and every one of them
+    must be reachable from a published title — unlike ``role_family`` there is no ``other``
+    member to fall into."""
+    covered = {rule.value for rule in load_classifiers().person_role_type}
+    assert covered == {member.value for member in enums.RoleType}
+
+
+@pytest.mark.parametrize(
+    ("title", "role_type"),
+    [
+        # File order is precedence, and each of these titles matches two rules. A founder is a
+        # founder whatever else the title says, and an engineering lead is not a generic exec.
+        ("CEO and Founder", enums.RoleType.FOUNDER),
+        ("Chief Scientist & Co-Founder", enums.RoleType.FOUNDER),
+        ("VP of Engineering", enums.RoleType.ENG_LEAD),
+        ("Head of Talent", enums.RoleType.RECRUITER),
+        # ... while a title that matches only the generic rule gets the generic answer.
+        ("Chief Financial Officer", enums.RoleType.EXEC),
+    ],
+)
+def test_person_role_precedence(title: str, role_type: enums.RoleType) -> None:
+    assert classify_person_role(title)[0] is role_type
+
+
+@pytest.mark.parametrize("title", [None, "", "   ", "Barista", "Underwater Basket Weaver"])
+def test_an_unclassifiable_title_is_none_not_a_guess(title: str | None) -> None:
+    """SPEC §5 makes ``Person.role_type`` nullable and SPEC §6 stores only what a company
+    published: a title no rule matches leaves the column NULL, and the person is still stored
+    and still shown."""
+    assert classify_person_role(title) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Founding Engineer",
+        "Founding Designer",
+        "Founding Account Executive",
+        "Founding Member of Technical Staff",
+    ],
+)
+def test_a_founding_employee_is_not_a_founder(title: str) -> None:
+    """SPEC §5's ``role_type`` enum is founder/exec/recruiter/eng_lead, and "Founding <function>"
+    is the modern startup name for an *early employee*, not for someone who founded the company.
+    A bare ``founding`` keyword would file every one of these as ``founder`` and the panel would
+    label an engineer a founder, which is exactly the guess the ``person_role_type`` block says
+    it never makes. NULL is the honest answer, and the person is still stored and still shown.
+
+    ``config/classifiers.yaml`` already draws this line for jobs: ``seniority`` lists "founding
+    engineer" as its own executive-level *job title*, separate from ``co-founder``.
+    """
+    assert classify_person_role(title) == (None, None)
+
+
+def test_the_matched_person_keyword_is_returned() -> None:
+    """Same rule as SPEC §7.1's "log the matched keyword": a wrong ``role_type`` has to trace
+    back to one line of YAML rather than to a guess somewhere in Python."""
+    assert classify_person_role("VP of Engineering") == (
+        enums.RoleType.ENG_LEAD,
+        "vp of engineering",
+    )
+    assert classify_person_role("Head of Talent") == (enums.RoleType.RECRUITER, "head of talent")
+
+
 # ------------------------------------------------------------------ editability
 
 
 def test_precedence_can_be_changed_without_touching_python(tmp_path: Path) -> None:
-    """CLAUDE.md: "edit YAML, not Python". Reordering two rules changes the answer."""
+    """CLAUDE.md: "edit YAML, not Python". Reordering two rules changes the answer — for a
+    job's ``role_family`` (SPEC §7.1) and for a person's ``role_type`` (SPEC §6) alike."""
     yaml_text = textwrap.dedent(
         """
         role_family:
@@ -409,6 +479,11 @@ def test_precedence_can_be_changed_without_touching_python(tmp_path: Path) -> No
         funding:
           announcement: {any: [raises]}
           round_type: []
+        contacts:
+          people_search_terms: [founder]
+          person_role_type:
+            - {type: exec, any: [ceo]}
+            - {type: founder, any: [founder]}
         """
     )
     path = tmp_path / "classifiers.yaml"
@@ -417,3 +492,7 @@ def test_precedence_can_be_changed_without_touching_python(tmp_path: Path) -> No
     assert classify("Test Engineer", classifiers=reordered).role_family is enums.RoleFamily.QA
     # ... while the shipped file, which lists hardware first, answers hardware (SPEC §7.1).
     assert classify("Test Engineer").role_family is enums.RoleFamily.HARDWARE
+    # Same file, same mechanism: this one lists exec first, so "CEO & Founder" is an exec here
+    # and a founder in the shipped file (SPEC §6).
+    assert classify_person_role("CEO & Founder", classifiers=reordered)[0] is enums.RoleType.EXEC
+    assert classify_person_role("CEO & Founder")[0] is enums.RoleType.FOUNDER

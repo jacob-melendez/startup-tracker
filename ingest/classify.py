@@ -149,6 +149,10 @@ class RoundTypeRule(_RuleBlock):
     type: enums.RoundType
 
 
+class PersonRoleRule(_RuleBlock):
+    type: enums.RoleType
+
+
 class EmploymentTypeBlock(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -167,6 +171,35 @@ class FundingBlock(BaseModel):
     round_type: tuple[RoundTypeRule, ...] = ()
 
 
+class ContactsBlock(BaseModel):
+    """The SPEC §6 vocabularies that *classify* (``ingest/contacts.py``), kept here for the same
+    reason as :class:`FundingBlock`: no keywords in Python (CLAUDE.md).
+
+    Not every word ``ingest/contacts.py`` matches on lives here, and the two fields below are
+    the ones that decide a stored value rather than whether a string is usable at all: its
+    name-plausibility vocabulary (``_NOT_A_NAME``, ``_CREDENTIALS``) is deliberately Python,
+    beside the test that uses it and beside :data:`ingest.normalize.NAME_SUFFIXES`, which is the
+    same kind of rule for company names. That module's docstring says so; this block is not
+    where to look for it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: SPEC §6 "People search": the title keywords the constructed deep link filters on. Each
+    #: term is used verbatim, quotes included — see :func:`ingest.contacts.people_search_url`.
+    people_search_terms: tuple[str, ...] = Field(min_length=1)
+    #: ``Person.role_type`` from a title the company published on its own team page.
+    person_role_type: tuple[PersonRoleRule, ...] = Field(min_length=1)
+
+    @field_validator("people_search_terms")
+    @classmethod
+    def _non_empty_terms(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not term.strip() for term in value):
+            msg = "people_search_terms must not be blank"
+            raise ValueError(msg)
+        return value
+
+
 class ClassifiersConfig(BaseModel):
     """``config/classifiers.yaml``, validated on load so a typo fails fast with a field path."""
 
@@ -177,6 +210,7 @@ class ClassifiersConfig(BaseModel):
     seniority: tuple[SeniorityRule, ...] = Field(min_length=1)
     flexible_signal: _RuleBlock
     funding: FundingBlock
+    contacts: ContactsBlock
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +224,9 @@ class Classifiers:
     flexible_signal: _Rule
     funding_announcement: _Rule
     round_type: tuple[_Rule, ...]
+    #: SPEC §6 — the people-search terms verbatim, and the ``Person.role_type`` rules.
+    people_search_terms: tuple[str, ...]
+    person_role_type: tuple[_Rule, ...]
 
 
 def _normalize_source_value(value: str) -> str:
@@ -232,6 +269,8 @@ def _load_classifiers(path: Path) -> Classifiers:
             ),
         ),
         round_type=_rules((r.model_dump() for r in config.funding.round_type), "type"),
+        people_search_terms=config.contacts.people_search_terms,
+        person_role_type=_rules((r.model_dump() for r in config.contacts.person_role_type), "type"),
     )
 
 
@@ -361,3 +400,29 @@ def classify_round_type(
     if hit is None:
         return enums.RoundType.UNKNOWN, None
     return enums.RoundType(hit[0]), hit[1]
+
+
+# ----------------------------------------------------------------------- contacts vocabulary
+
+
+def classify_person_role(
+    title: str | None, *, classifiers: Classifiers | None = None
+) -> tuple[enums.RoleType | None, str | None]:
+    """``(role_type, matched keyword)`` for a published job title (SPEC §5 ``Person``, §6).
+
+    ``(None, None)`` when there is no title or no rule matches. Unlike a job's ``role_family``
+    — which has an ``other`` member because classification never excludes a *role* (SPEC §7.1)
+    — ``Person.role_type`` is nullable, and an unclassified person is still stored and still
+    shown. The rules live in ``config/classifiers.yaml`` under ``contacts.person_role_type``;
+    the matched keyword is returned and logged so a wrong role traces back to one YAML line.
+    """
+    if not title or not title.strip():
+        return None, None
+    rules = classifiers if classifiers is not None else load_classifiers()
+    hit = _first_match(rules.person_role_type, _WHITESPACE.sub(" ", title))
+    if hit is None:
+        log.debug("classified person role", title=title, role_type=None, matched=None)
+        return None, None
+    role_type = enums.RoleType(hit[0])
+    log.debug("classified person role", title=title, role_type=role_type.value, matched=hit[1])
+    return role_type, hit[1]

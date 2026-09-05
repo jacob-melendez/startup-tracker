@@ -9,5 +9,13 @@
 <body>
   <!-- Recorded from https://www.astranis.com/ on 2026-09-04: title, description metas and the depth-1 links the connector may follow. -->
   <a href="/careers">link</a>
+
+  <!-- Recorded from the same page on 2026-09-04 for SPEC §6: the nav's "Talk to Sales"
+       button and the footer's social column. Webflow renders no <footer> element at all —
+       the social links live in a plain <div class="social-link footernew">, which is why
+       extraction looks at every anchor rather than at a footer subtree. The <svg> icon
+       bodies are dropped; every attribute and wrapper around the hrefs is verbatim. -->
+  <div class="navbar-button-wrap"><a href="/contact" class="nav-contact-button navbar-button w-inline-block"><div class="text-block-41">Talk to Sales</div></a></div>
+  <div class="container-6 flex-container footer-container"><div class="footer-content flex-row"><div class="flex-footer-column"><div class="footer-header">Follow</div><a href="https://twitter.com/Astranis" target="_blank" class="social-link footernew w-inline-block"><div class="social-link-icon"><img src="https://cdn.prod.website-files.com/66d8f757eb129d1a1706d930/66db6ae6f9ca3eabb3e69fc4_Icon%20-%20X.svg" loading="lazy" alt="" class="social-icon"/></div><div>X </div></a><a href="https://www.instagram.com/astranis_space" target="_blank" class="social-link footernew w-inline-block"><div class="social-link-icon"><div class="s-icon w-embed"></div></div><div>Instagram</div></a><a href="https://www.youtube.com/@astranisspace" target="_blank" class="social-link footernew w-inline-block"><div class="social-link-icon"><div class="s-icon yt w-embed"></div></div><div>YouTube</div></a><a href="https://www.linkedin.com/company/astranis/" target="_blank" class="social-link footernew w-inline-block"><div class="social-link-icon"><div class="s-icon w-embed"></div></div><div>LinkedIn</div></a></div></div></div>
 </body>
 </html>

@@ -93,8 +93,10 @@ Four pages, server-rendered Jinja2 with HTMX for the interactive parts, on
 - **`/` — the company list.** One collapsed row per company: name, HQ city, sector chips, latest
   round with amount and date, open role count, and a breakdown of which role families are open.
   Expanding a row lazy-loads the rest over HTMX — the thesis, every location, the funding history
-  with investors, the full open-roles table, contacts, a provenance line ("seen by greenhouse 2h
-  ago"), and an inline note / status / rating form that saves without leaving the page.
+  with investors, the full open-roles table, contacts (what the company published on its own site,
+  kept visibly separate from the LinkedIn search shortcuts the pipeline constructs — SPEC §6), a
+  provenance line ("seen by greenhouse 2h ago"), and an inline note / status / rating form that
+  saves without leaving the page.
 - **`/roles` — every open job, newest first.** The "what opened this week" view: one row per job
   across all companies, with a star toggle to bookmark one.
 - **`/company/{id}`** — the expanded row as a standalone, linkable page.
@@ -111,8 +113,10 @@ Every page is rendered from the local Postgres database and nothing else (SPEC �
 handler fetches anything: nothing under `web/` may even import `httpx` or a connector, and a test
 walks the AST of every module there to prove it. So pages render in milliseconds, and no amount
 of clicking around can get you rate-limited or blocked by a source. External links — job posting
-URLs, company sites, careers pages — are rendered for *you* to click, and each one is checked for
-an `http`/`https` scheme first, so a scraped `javascript:` URL never becomes an `href`.
+URLs, company sites, careers pages, LinkedIn pages and searches — are rendered for *you* to click,
+and each one is checked for an `http`/`https` scheme first, so a scraped `javascript:` URL never
+becomes an `href`. LinkedIn in particular is only ever a link: nothing in the codebase fetches
+`linkedin.com`, in a request handler or a connector (SPEC §4, §6).
 
 ### Filters
 

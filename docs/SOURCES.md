@@ -12,8 +12,13 @@ honoured before every request (matched per RFC 9309 — `*` and `$` wildcards, m
 rule wins, fractional `Crawl-delay` — because the older `urllib` parser ignores all three and
 so silently *widens* what we would fetch), tenacity retries with exponential backoff (and
 `Retry-After`), and a 24-hour ETag/Last-Modified cache. A `robots.txt` that cannot be fetched
-at all (5xx, transport failure) disallows its origin for the rest of the run. Nothing is ever fetched from LinkedIn, Crunchbase,
-Wellfound/AngelList, and no email address is guessed or SMTP-verified (SPEC §4 "Excluded").
+at all (5xx, transport failure) disallows its origin for the rest of the run.
+
+**Nothing is ever fetched from LinkedIn, Crunchbase or Wellfound/AngelList, and no email address
+is guessed or SMTP-verified** (SPEC §4 "Excluded"). LinkedIn appears in this system only as
+*links*: a URL a company published on its own site, or one constructed from its name and domain
+and stored for the user to click. No request is ever made to `linkedin.com` and no profile data
+is fetched or stored — see the `company_site` section below for how SPEC §6 does it instead.
 
 ---
 
@@ -281,7 +286,9 @@ recognise is the commitment, one that is a URL is the link, and the first field 
 A comment with no pipes falls back to its leading proper name ("SwingVision is the AI tennis
 app…"). One `Job` per comment (`external_id` = the HN item id, `posted_at` = the comment time),
 plus one per `- Role: https://…` bullet, which is how multi-role comments are written. An email
-the poster wrote becomes a `Contact` with `confidence='published'`.
+the poster wrote becomes a `Contact` with `confidence='published'` — normalized (lowercased, and
+nothing else) by the same `ingest/contacts.py` function `company_site` runs its `mailto:` hrefs
+through, so one address cannot become two rows for the same company (SPEC §6).
 
 ### Known limitations
 
@@ -372,8 +379,12 @@ Tier-3 rules are all in force, all enforced by the shared client from this conne
 * `robots.txt` parsed and honoured **before every request** (`respect_robots: true`);
 * **at most 1 request per domain per 2 seconds** (`requests_per_second: 0.5`), stretched further
   by a host's own `Crawl-delay`;
-* a hard cap of **5 pages per domain per run** (`max_requests_per_host_per_run: 5`), on top of
-  which the connector asks for at most 3;
+* a hard cap of **5 pages per domain per run** (`max_requests_per_host_per_run: 5`), which is
+  also what the connector asks for at most (`MAX_PAGES_PER_COMPANY`): the home page plus one
+  depth-1 page for each of the tier's four paths. The two numbers being equal leaves no slack
+  for a same-host redirect, which the client charges to the same budget, so a redirect-heavy
+  site simply loses its last page and the run records `budget_exceeded` — deliberate, because
+  the alternative is exceeding the cap SPEC §4 sets;
 * responses cached 24 h with `ETag`/`Last-Modified`;
 * **never deeper than depth 1** — the home page, then links found *on it* whose path matches
   `options.depth_one_paths` (`careers`, `jobs`, `about`, `team`) and which stay on the same
@@ -386,20 +397,137 @@ rather than re-fetching the same first forty sites.
 
 ### Fields extracted
 
-`og:description` / `<meta name="description">` (→ `Company.one_liner`, and `thesis` when it is
-longer than the one-liner cap), the URL the redirects settled on (→ `website_url`), and the
-company's own careers page as a `Contact` with `kind='careers_page'` and
-`confidence='published'` — the company published that URL itself (SPEC §6).
+Every value below comes off a page this connector fetched from the company's **own** domain — the
+home page, plus the depth-1 `careers` / `jobs` / `about` / `team` pages it links to. That is why
+every `Contact` and every `Person` written here carries `confidence='published'` (SPEC §6): the
+company put the value on its own site. This connector never writes a `constructed` value; those
+are built by the pipeline on *every* company upsert (see below).
+
+| stored as | where it comes from |
+|---|---|
+| `Company.one_liner` | `og:description`, `<meta name="description">` or `twitter:description` on the home page, else the `<title>` with its trailing brand suffix stripped, capped at 300 characters |
+| `Company.thesis` | the same description when it is longer than the one-liner cap |
+| `Company.website_url` | the URL the home page's redirects settled on — usually the `www.` form of a bare seeded domain |
+| `Contact` `careers_page` | the careers/jobs page the home page links to, i.e. the depth-1 page the company itself published as its jobs page |
+| `Contact` `email` | every `mailto:` href on any page the visit fetched — SPEC §4 Tier 3's "any `mailto:` the company published", which is also SPEC §6's "only store addresses the company itself published". Normalized as described below and capped at `options.max_emails_per_company` |
+| `Contact` `linkedin_company` | a link to `linkedin.com/company/<slug>`, canonicalised to `https://www.linkedin.com/company/<slug>` (country prefix, query, fragment, trailing slash and any `/about` tail dropped; the slug keeps its published case, because LinkedIn also serves numeric ids such as `…/company/4803356`, which is what `sourcegraph.com` links to) |
+| `Contact` `x` | a link to `x.com/<handle>` or `twitter.com/<handle>`, canonicalised to `https://x.com/<handle>` — the old host redirects to the new one, so one account can never become two rows |
+| `Contact` `github` | a link to `github.com/<org>`, canonicalised to `https://github.com/<org>`. `<org>/<repo>` stores the org, which is what a "we're on GitHub" link means; anything deeper is rejected, as are GitHub's own reserved and marketing paths (`/about`, `/topics`, `/features`, `/pricing` …) |
+| `Contact` `contact_form` | a link whose path contains `contact` **on the company's own registrable domain**. One per company: the shallowest such path on the first page that has one, so `…/contact` wins over `…/contact/request-info` |
+| `Person` | each `linkedin.com/in/<slug>` link on a team or about page: `full_name` and `title` from the text the company printed beside it, `linkedin_url` the canonicalised profile URL **as published**, `role_type` classified from that title by `config/classifiers.yaml` (`contacts.person_role_type`) and left `NULL` when no rule matches. Deduped across the visit by profile URL *and* by name, capped at `options.max_people_per_company` |
+
+The contacts of one visit come out in a stable order — careers page, then addresses, then social
+links, each in page and document order. That order is what decides which contacts survive
+`options.max_emails_per_company` and the one-`contact_form`-per-company rule, so the same pages
+always yield the same rows and a weekly re-run of an unchanged site adds nothing and changes no
+value. It does still *write*: each contact is upserted on its `(company_id, kind, value)`, and
+re-observing a published one refreshes that row's `source_id` to the run that last saw it. Only
+the constructed rows below are left untouched.
+
+An address is stored as `ingest/contacts.py` normalizes it: the `?subject=…` tail dropped, percent
+escapes decoded, the first address of a comma-separated list kept, and the whole thing
+**lowercased** — `mailto:HR@atom-computing.com` is real markup, and the same address seen in
+lowercase elsewhere must not become a second row. A share widget's address-less `mailto:?subject=…`
+yields nothing.
+
+SPEC §4 and §6 both say *footer* social links, and the anchors are searched **anywhere on the
+page** rather than inside a `<footer>` element. That is where the links are in practice, not what
+identifies them: `www.astranis.com` has no `<footer>` element at all (Webflow renders the social
+column as a plain `<div class="social-link footernew">`), so a footer-scoped search would find
+nothing on the very page SPEC §6's "published" case comes from. The shape rules in the table above
+are the first half of what keeps the wider search honest — only an account URL on one of four
+hosts is accepted, in the body as in the footer.
+
+The second half is **whose** account it is, which the shape cannot say: an "Our investors" block
+links a perfectly well-formed `linkedin.com/company/<slug>` that belongs to a fund. So a footer
+would have proved ownership, and without one the visit decides it, across all its pages at once
+(`ingest/contacts.py:select_social_contacts`) — a home page's own link has to outweigh an
+investor's on `/about`. Per kind (`linkedin_company`, `x`, `github`):
+
+1. one candidate across the whole visit is the company's. That is the ordinary case, and it is
+   what accepts `sourcegraph.com`'s numeric `…/company/4803356` and `twelve.co`'s
+   `…/company/twelveco2`, neither of which its domain could have produced;
+2. otherwise the first whose slug, handle or org — case and separators ignored — is the company's
+   own name or domain label. That keeps `…/company/acme-robotics` and drops the
+   `…/company/y-combinator` a "Backed by" block links;
+3. otherwise **none** of that kind is published. Several accounts and no way to tell which is
+   theirs is exactly SPEC §6's "otherwise": for `linkedin_company` the pipeline then constructs a
+   link to the right company and the UI labels it a search shortcut, which beats publishing a
+   confident link to the wrong one.
+
+The limit of rule 1 is worth stating: a site whose only GitHub link cites somebody else's
+repository, and which publishes no org of its own, is indistinguishable from one whose org is
+named nothing like the company, so that link is stored. Only `linkedin_company` has a constructed
+counterpart, so it is the one kind where getting this wrong would also cost the correct link.
+Contact forms are exempt — they are already restricted to the company's own registrable domain.
+
+Extraction reads parsed `<a href>` values only, never a regex over the raw markup: a live probe of
+`twelve.co` found `github.com/wix/yoshi/issues/2689` inside a bundled script, which anchor-only
+parsing correctly ignores. Two guards keep page furniture out of `Person`: a name candidate must
+look like a name (2–5 tokens, no digits, two capitalised tokens, and none of `linkedin`, `visit`,
+`follow`, `profile`, `team`, `leadership`), and **a name claimed by more than one profile link on
+the same page is a section heading, not a person** — that is `atom-computing.com/about-us`, where
+every card's anchor text is "Visit our LinkedIn" under one `Executive Leadership` heading.
+
+### LinkedIn: links only, never a fetch
+
+**Nothing on `linkedin.com` is ever fetched, by this connector or any other.** SPEC §4 excludes
+LinkedIn scraping outright — it is prohibited by their terms and would risk the user's own
+account — and SPEC §6 is the alternative: the system *stores URLs* for the user to click and
+never requests one, so no profile data is fetched or stored. What this connector does is read a
+LinkedIn URL a company chose to print in its own footer or on its own team page. That is a
+published fact about the company, obtained from the company's server.
+
+Two contacts are **constructed**, not observed, and they are built by `ingest/pipeline.py` from
+`ingest/contacts.py` on **every company upsert** — not only for the ones this Tier-3 connector
+has visited, and without any fetch at all:
+
+* `linkedin_company` — `https://www.linkedin.com/company/{slug}`, where the slug is the
+  registrable label of the company's domain (`atom-computing.com` → `atom-computing`,
+  `baseten.co` → `baseten`, `foo.co.uk` → `foo`). Written only when the company has **no**
+  published LinkedIn company link; a published one arriving later removes it (SPEC §6: "Otherwise
+  construct …"). Both forms are canonicalised by the same function, so when the published slug
+  equals the constructed one the row is promoted from `constructed` to `published` in place. A
+  company with no domain — an EDGAR-only row, say — gets none: a slug guessed from nothing is a
+  link to a stranger.
+* `linkedin_people` — the "Find people →" deep link of SPEC §6, a people search for the company
+  name plus the title keywords in `config/classifiers.yaml` (`contacts.people_search_terms`:
+  `founder OR recruiter OR "head of engineering" OR "talent"`).
+
+Both carry `confidence='constructed'` and no `source_id` — nothing was fetched, so there is no
+`Source` row — and the UI labels them as search shortcuts rather than addresses (SPEC §6, §9).
+Because a constructed value is derived from the company's current name and domain, a stale one
+(the domain changed, so the shortcut now points at somebody else's company) is replaced rather
+than kept; that is not the "never delete on refresh" rule of SPEC §2/§5, which is about *observed*
+data such as a job that disappeared from its board.
+
+Construction is part of the upsert rather than a sweep over the table. Every row in `companies` is
+written by that upsert, so a database built under Phase 5 carries both links everywhere; a database
+migrated from an earlier phase gains them company by company, as each is next upserted, and nothing
+backfills the remainder. A company with no `website_url` — every EDGAR-only row — is not visited by
+`company_site` at all, so for those the links arrive only when some other connector re-upserts the
+company.
 
 ### Known limitations and deliberate omissions
 
-* Published `mailto:` addresses, footer social links, `Person` rows and the *constructed*
-  LinkedIn search links are SPEC §6 and are built in **Phase 5** (SPEC §12); this connector is
-  the fetch-and-parse half they hang off.
 * A site that declines — robots, a WAF `403`, a redirect loop — is skipped quietly. SPEC §4 says
   a Tier-3 site may simply say no, and one company's Cloudflare must not colour the run.
 * Every record is `enrich_only`: a redirect that lands somewhere unexpected must never create a
   company.
+* **No address is ever guessed or verified** (SPEC §4 "Excluded", SPEC §6): there is no
+  `firstname@company.com` pattern, no MX lookup and no SMTP probe anywhere in the codebase. An
+  address is stored only because a company linked it, here or in an HN hiring comment
+  (`hn_hiring`, which normalizes addresses through the same function so the two sources cannot
+  write one address twice in different cases).
+* Contacts are only as complete as the five pages a visit fetches — the home page plus one page
+  per SPEC §4 Tier 3 section (`/careers`, `/jobs`, `/about`, `/team`). A company whose social
+  links live on a `/contact` page two hops down, or whose footer is rendered in JavaScript,
+  yields none — and gets the constructed LinkedIn shortcuts like everyone else.
+* A social account is published only when the visit can tell it is the company's own (below).
+  A site that links no account of its own, and one third party's, publishes none of that kind.
+* A person is only found where the company published a LinkedIn profile link next to a name.
+  Team pages that link nothing, or that render their cards client-side, produce no `Person` rows;
+  `sec_edgar` supplies officers from public filings instead.
 
 ---
 

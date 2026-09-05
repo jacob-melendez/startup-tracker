@@ -47,11 +47,16 @@
 
 {#- One external link, or plain text when `safe_url` rejected the URL. Every externally
     sourced href in this app goes through that filter: job and company URLs are scraped from
-    third-party pages, so a `javascript:` value is a real injection vector. -#}
-{%- macro external_link(url, text) -%}
+    third-party pages, so a `javascript:` value is a real injection vector.
+
+    `css_class` is how SPEC §6's "Find people →" gets to look like a button while staying an
+    ordinary `<a>` — this app has no JavaScript of its own, so a control that needs a click
+    handler could not work at all. It is applied only on the anchor branch: a URL `safe_url`
+    refused renders as inert text, and dressing inert text as a button would be a lie. -#}
+{%- macro external_link(url, text, css_class='') -%}
   {%- set href = url | safe_url -%}
   {%- if href -%}
-    <a href="{{ href }}" rel="noopener noreferrer" target="_blank">{{ text or url }}</a>
+    <a {% if css_class %}class="{{ css_class }}" {% endif %}href="{{ href }}" rel="noopener noreferrer" target="_blank">{{ text or url }}</a>
   {%- else -%}
     <span class="muted">{{ text or url }}</span>
   {%- endif -%}

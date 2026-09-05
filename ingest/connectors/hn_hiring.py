@@ -31,7 +31,8 @@ What is written. One :class:`~ingest.base.CompanyRecord` per comment, with the c
 ``- Role: https://…`` bullet, which is how multi-role comments are written. ``jobs_complete`` is
 **False**: a comment is a slice of a company's openings, never the whole board, so nothing here
 may close a job another connector reported (SPEC §2, §5). An address the poster wrote themselves
-becomes a ``published`` contact (SPEC §6); nothing is ever guessed.
+becomes a ``published`` contact (SPEC §6), normalized by :mod:`ingest.contacts` into the same
+form the company-site connector stores its ``mailto:`` links in; nothing is ever guessed.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from ingest.base import (
 )
 from ingest.classify import classify
 from ingest.config import ConnectorConfig, RegionsConfig
+from ingest.contacts import EMAIL_IN_TEXT, normalize_email
 from ingest.htmlutil import html_to_text
 from ingest.http import RobotsDisallowed
 from ingest.normalize import normalize_domain
@@ -74,7 +76,6 @@ DESCRIPTION_LIMIT = 8000
 
 _HIRING_TITLE = re.compile(r"^ask hn:\s*who is hiring\?", re.IGNORECASE)
 _URL = re.compile(r"https?://[^\s<>\"')\]]+")
-_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 #: ``- Data Labeling Intern: https://…`` / ``* Head of Product — https://…``
 _ROLE_BULLET = re.compile(
     r"^[-*•]\s*(?P<title>[^:<>]{3,120}?)\s*[:\-–—]\s*(?P<url>https?://\S+)", re.MULTILINE
@@ -306,8 +307,21 @@ def extract_domain(
 
 
 def extract_emails(text: str) -> list[str]:
-    """Addresses the poster wrote in their own comment (SPEC §6: ``published`` only)."""
-    return list(dict.fromkeys(match.group(0) for match in _EMAIL.finditer(text)))
+    """Addresses the poster wrote in their own comment (SPEC §6: ``published`` only).
+
+    Both the pattern and the normalisation come from :mod:`ingest.contacts`, which is also what
+    the company-site connector runs its ``mailto:`` hrefs through. The two sources SPEC §6 allows
+    must recognise the same addresses and store each in exactly one form:
+    ``HR@atom-computing.com`` from a careers page and ``hr@atom-computing.com`` from a comment
+    are the same address, and storing both would put two rows past
+    ``uq_contacts_company_id_kind_value`` for one company.
+    """
+    found: dict[str, None] = {}
+    for match in EMAIL_IN_TEXT.finditer(text):
+        address = normalize_email(match.group(0))
+        if address is not None:
+            found.setdefault(address, None)
+    return list(found)
 
 
 def extract_role_bullets(text: str) -> list[tuple[str, str]]:

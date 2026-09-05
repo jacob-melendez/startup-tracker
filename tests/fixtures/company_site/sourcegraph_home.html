@@ -11,8 +11,26 @@
 </head>
 <body>
   <!-- Recorded from https://sourcegraph.com/; title, description metas and the
-       depth-1 links the connector may follow are kept. -->
+       depth-1 links the connector may follow are kept. The two depth-1 anchors' bodies were
+       replaced with "link" when this file was trimmed for Phase 3; every other anchor here is
+       verbatim. -->
   <a href="/about" class="footer-link svelte-1byebc7">link</a>
   <a href="/jobs" class="footer-link svelte-1byebc7">link</a>
+
+  <!-- Verbatim from the same recording for SPEC §6's contact-form rule: the demo CTA in the
+       nav points at /contact/request-info, and the footer's own Contact link — a sibling of
+       the two anchors above, same class, same run of links — points at /contact. The deeper
+       path comes first in document order, so this page is the recorded proof that the
+       shallowest same-domain contact path wins rather than the first one seen. -->
+  <a href="/contact/request-info" class="nav-cta-button svelte-1e0rpc3">Schedule a demo</a>
+  <a href="/contact" class="footer-link svelte-1byebc7">Contact</a>
+
+  <!-- Recorded from the same page on 2026-09-04 for SPEC §6: the real <footer> social
+       block. Every anchor's only child is an <svg> (bodies dropped here), so the anchor
+       text is empty and the account can only be read from the href — and the LinkedIn
+       href is the numeric company id 4803356, which can never equal the slug SPEC §6
+       constructs from the domain (…/company/sourcegraph). This is the published-beats-
+       constructed reconciliation case. -->
+  <footer class="footer svelte-1byebc7"><div class="container container-xlarge svelte-mch4tl"><div class="footer-content svelte-1byebc7"><div class="footer-content-wrapper svelte-1byebc7"><div class="footer-brand svelte-1byebc7"><div class="footer-tagline svelte-1byebc7">Code understanding for humans and agents</div> <div class="footer-social svelte-1byebc7"><a href="https://github.com/sourcegraph" class="footer-social-link svelte-1byebc7" aria-label="GitHub" target="_blank" rel="noopener noreferrer"><svg class="footer-icon" width="100%" fill="currentColor" viewBox="0 0 24 24"></svg></a><a href="https://x.com/Sourcegraph" class="footer-social-link svelte-1byebc7" aria-label="X" target="_blank" rel="noopener noreferrer"><svg class="footer-icon" width="100%" fill="currentColor" viewBox="0 0 24 24"></svg></a><a href="https://www.linkedin.com/company/4803356/" class="footer-social-link svelte-1byebc7" aria-label="LinkedIn" target="_blank" rel="noopener noreferrer"><svg class="footer-icon" width="100%" fill="currentColor" viewBox="0 0 24 24"></svg></a><a href="https://www.youtube.com/c/Sourcegraph" class="footer-social-link svelte-1byebc7" aria-label="YouTube" target="_blank" rel="noopener noreferrer"><svg class="footer-icon" width="100%" fill="currentColor" viewBox="0 0 24 24"></svg></a></div></div></div></div></div></footer>
 </body>
 </html>

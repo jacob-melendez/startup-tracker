@@ -1,10 +1,12 @@
-"""The initial migration produces exactly the schema SPEC §5 describes.
+"""The migrations produce exactly the schema SPEC §5 and §6 describe.
 
 Every assertion is against the live Postgres catalog after ``alembic upgrade head``:
 tables, enum types and their members, indexes (including the expression, GIN, and trigram
 ones), constraints, the generated ``tsvector`` columns, the ``pg_trgm`` extension — and
-that ``db/models.py`` agrees with what the migration built. Expected names are written out
-literally rather than derived from the models so a change to either side is caught.
+that ``db/models.py`` agrees with what the migrations built. Expected names are written out
+literally rather than derived from the models so a change to either side is caught. Revision
+``0002`` (SPEC §6's ``contact_kind.linkedin_people``) is exercised both ways, since Postgres
+cannot drop an enum label and its downgrade has to rebuild the type.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
-from db.enums import PG_ENUMS
+from db.enums import PG_ENUMS, ContactKind
 from db.models import Base
 
 EXPECTED_TABLES = {
@@ -61,6 +63,16 @@ EXPECTED_ENUM_TYPES = {
     "fetch_run_status",
     "tracking_status",
 }
+
+# contact_kind as revision 0001 created it — what 0002's downgrade must leave behind.
+CONTACT_KIND_AT_0001 = [
+    "email",
+    "linkedin_company",
+    "careers_page",
+    "x",
+    "github",
+    "contact_form",
+]
 
 ROLE_FAMILIES = (
     "software",
@@ -200,8 +212,10 @@ async def test_every_enum_type_exists_with_its_members(conn: AsyncConnection) ->
     assert enums["company_status"] == ["active", "acquired", "dead"]
     assert enums["ats_provider"] == ["greenhouse", "lever", "ashby", "workable"]
     assert enums["role_type"] == ["founder", "exec", "recruiter", "eng_lead"]
+    # SPEC §6: ``linkedin_people`` (revision 0002) sorts straight after ``linkedin_company``.
     assert enums["contact_kind"] == [
-        "email", "linkedin_company", "careers_page", "x", "github", "contact_form",
+        "email", "linkedin_company", "linkedin_people",
+        "careers_page", "x", "github", "contact_form",
     ]  # fmt: skip
     assert enums["contact_confidence"] == ["published", "constructed"]
     assert enums["fetch_run_status"] == ["ok", "partial", "error"]
@@ -340,6 +354,91 @@ async def test_models_agree_with_the_migrated_schema(conn: AsyncConnection) -> N
         return list(compare_metadata(ctx, Base.metadata))
 
     assert await conn.run_sync(_diff) == []
+
+
+def test_revision_0002_places_linkedin_people_and_downgrades_by_rebuilding_the_type(
+    alembic_config: Config, migrated_database: str
+) -> None:
+    """SPEC §6: the "Find people →" kind exists, sorts in place, and its downgrade is real.
+
+    Postgres cannot drop an enum label, so ``0002`` rebuilds ``contact_kind`` — which only
+    works once the ``linkedin_people`` rows are gone. Seeding one proves the ``DELETE`` runs
+    (without it the ``ALTER COLUMN ... USING`` fails on an invalid enum input) and that it is
+    scoped to the constructed kind: the published contact next to it survives.
+    """
+    domain = "enum-round-trip.example"
+
+    async def _seed() -> None:
+        engine = create_async_engine(migrated_database)
+        try:
+            async with engine.begin() as c:
+                company_id = await c.scalar(
+                    text(
+                        "INSERT INTO companies (name, normalized_name, domain) "
+                        "VALUES ('Enum Round Trip', 'enum round trip', :domain) RETURNING id"
+                    ),
+                    {"domain": domain},
+                )
+                await c.execute(
+                    text(
+                        "INSERT INTO contacts (company_id, kind, value, confidence) VALUES "
+                        "(:id, 'linkedin_people', :people, 'constructed'), "
+                        "(:id, 'careers_page', :careers, 'published')"
+                    ),
+                    {
+                        "id": company_id,
+                        "people": "https://www.linkedin.com/search/results/people/?keywords=x",
+                        "careers": f"https://{domain}/careers",
+                    },
+                )
+        finally:
+            await engine.dispose()
+
+    async def _labels() -> list[str]:
+        engine = create_async_engine(migrated_database)
+        try:
+            async with engine.connect() as c:
+                return (await _public_enums(c))["contact_kind"]
+        finally:
+            await engine.dispose()
+
+    async def _seeded_kinds() -> list[str]:
+        engine = create_async_engine(migrated_database)
+        try:
+            async with engine.connect() as c:
+                rows = await _rows(
+                    c,
+                    "SELECT contacts.kind::text AS kind FROM contacts JOIN companies "
+                    f"ON companies.id = contacts.company_id WHERE companies.domain = '{domain}'",
+                )
+                return sorted(r.kind for r in rows)
+        finally:
+            await engine.dispose()
+
+    async def _cleanup() -> None:
+        engine = create_async_engine(migrated_database)
+        try:
+            async with engine.begin() as c:
+                await c.execute(
+                    text("DELETE FROM companies WHERE domain = :domain"), {"domain": domain}
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_seed())
+    try:
+        assert asyncio.run(_seeded_kinds()) == ["careers_page", "linkedin_people"]
+        command.downgrade(alembic_config, "-1")
+        assert asyncio.run(_labels()) == CONTACT_KIND_AT_0001
+        assert asyncio.run(_seeded_kinds()) == ["careers_page"]
+    finally:
+        # Restore the session fixture's invariant (database at head) even if an assertion fails.
+        command.upgrade(alembic_config, "head")
+        asyncio.run(_cleanup())
+    labels = asyncio.run(_labels())
+    assert labels == [member.value for member in ContactKind]
+    # The AFTER clause, not append order: enumsortorder puts it right after the company page.
+    assert labels.index("linkedin_people") == labels.index("linkedin_company") + 1
 
 
 def test_downgrade_removes_everything_and_upgrade_restores_it(

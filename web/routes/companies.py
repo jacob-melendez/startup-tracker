@@ -18,9 +18,10 @@ and narrow that table, but only the row's own controls ever set one — the coll
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import APIRouter, Form, HTTPException
 from sqlalchemy import func, select
@@ -36,6 +37,7 @@ from db.models import (
     Company,
     CompanyLocation,
     CompanySector,
+    Contact,
     FundingRound,
     RoundInvestor,
     UserNote,
@@ -51,6 +53,7 @@ from web.filters import (
     panel_query_string,
     role_sort_links,
 )
+from web.labels import CONTACT_KIND_ORDER
 from web.templating import next_page_url, templates
 
 router = APIRouter()
@@ -58,6 +61,12 @@ router = APIRouter()
 #: SPEC §5's rating scale.
 MIN_RATING = 1
 MAX_RATING = 5
+
+#: Rank per kind for the contacts block, from :data:`web.labels.CONTACT_KIND_ORDER`. A kind with
+#: no rank (a member added to the enum before the order was updated) sorts last rather than
+#: raising: SPEC §6 says the panel must show what was stored, and a missing display rule is not
+#: a reason to drop a contact or take the page down.
+_KIND_RANK: dict[str, int] = {kind.value: rank for rank, kind in enumerate(CONTACT_KIND_ORDER)}
 
 #: Everything ``_company_panel.html`` reads off the ORM object, loaded in one round trip per
 #: relationship instead of one per row. ``selectinload`` (not ``joinedload``) because these are
@@ -237,6 +246,10 @@ async def _panel_context(
         "roles_reset_qs": panel_query_string(
             highlight, replace(controls, title_q=None, include_closed=False)
         ),
+        # SPEC §6's last clause is a UI requirement, so the split is made here — once, for both
+        # handlers — rather than in the template, where two `if` branches over one list would
+        # have to agree about the order as well as about the partition.
+        "contacts": _group_contacts(company.contacts),
         "note": company.user_note,
     }
 
@@ -257,6 +270,47 @@ async def _load_company(session: AsyncSession, company_id: int) -> Company:
     # collection methods, and no ordering is persisted anyway — there is no order column.
     company.funding_rounds.sort(key=_round_order, reverse=True)
     return company
+
+
+class ContactGroups(NamedTuple):
+    """One company's contacts, split the way SPEC §6 requires the UI to show them.
+
+    ``published`` is what the company itself put on its own pages — a real address. Constructed
+    rows are deterministic search shortcuts we built from the name and domain; SPEC §6: "the UI
+    must visually distinguish ``published`` from ``constructed`` so it's obvious which is a real
+    address and which is a search shortcut". Two lists, not one list plus a flag, so the template
+    cannot render them interleaved and leave the badge as the only thing telling them apart.
+    """
+
+    published: list[Contact]
+    constructed: list[Contact]
+
+
+def _group_contacts(contacts: Sequence[Contact]) -> ContactGroups:
+    """Partition by ``confidence``, each group in :data:`web.labels.CONTACT_KIND_ORDER` order.
+
+    Sorting here rather than in the query because ``contacts`` is an eager-loaded collection of
+    at most a handful of rows per company: an ``order_by`` on the relationship would buy nothing
+    and would put a display decision in the data layer.
+
+    Anything that is neither ``published`` nor ``constructed`` cannot exist — ``contact_confidence``
+    is a two-member Postgres enum — so a plain else-branch is honest here rather than lossy.
+    """
+    published: list[Contact] = []
+    constructed: list[Contact] = []
+    for contact in contacts:
+        target = (
+            published if contact.confidence is enums.ContactConfidence.PUBLISHED else constructed
+        )
+        target.append(contact)
+    for group in (published, constructed):
+        group.sort(key=_contact_order)
+    return ContactGroups(published=published, constructed=constructed)
+
+
+def _contact_order(contact: Contact) -> tuple[int, str]:
+    """Kind rank, then value — so two emails on one company list alphabetically and stably."""
+    return (_KIND_RANK.get(contact.kind, len(_KIND_RANK)), contact.value)
 
 
 def _round_order(round_: FundingRound) -> tuple[date, int]:

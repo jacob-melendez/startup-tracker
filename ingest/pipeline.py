@@ -16,8 +16,10 @@ The pipeline is the only code that turns connector output into database rows:
   in ``Company.field_provenance``.
 
 Nothing here makes a network request (SPEC §2): connectors fetch, the pipeline writes.
-Nothing here deletes: a job that vanished from its source gets ``closed_at`` (SPEC §2, §5) and
-a probable duplicate becomes a ``MergeCandidate`` for ``cli.py merge-review`` (SPEC §8).
+Nothing here deletes *observed* data: a job that vanished from its source gets ``closed_at``
+(SPEC §2, §5) and a probable duplicate becomes a ``MergeCandidate`` for ``cli.py merge-review``
+(SPEC §8). The single exception is a superseded **constructed** contact, which was never
+observed in the first place — see :func:`_ensure_constructed_contacts`.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, CursorResult, Select, func, or_, select
+from sqlalchemy import ColumnElement, CursorResult, Select, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -66,6 +68,7 @@ from ingest.base import (
     PersonRecord,
 )
 from ingest.config import RegionsConfig, load_regions_config
+from ingest.contacts import constructed_linkedin_company_url, people_search_url
 from ingest.http import HttpClient, utc_now
 from ingest.normalize import (
     ResolutionKey,
@@ -664,6 +667,166 @@ async def _upsert_contacts(
         await session.execute(stmt)
 
 
+async def _insert_constructed_contact(
+    session: AsyncSession, company_id: int, kind: enums.ContactKind, value: str
+) -> None:
+    """Write one ``confidence='constructed'`` contact, leaving an existing row alone.
+
+    ``ON CONFLICT DO NOTHING`` rather than :func:`_upsert_contacts`' ``DO UPDATE``: the stored
+    row for this exact value may already be ``published`` (a footer that links to precisely the
+    URL we would have constructed, which is the common case — ``astranis.com`` links to
+    ``linkedin.com/company/astranis``). Overwriting it would downgrade an observation to a
+    guess, which SPEC §6 forbids in the one direction that matters.
+
+    ``source_id`` is ``NULL`` by construction: nothing was fetched to produce this URL, so
+    there is no ``Source`` row that could honestly be pointed at (SPEC §5 ``Source`` is "what
+    was fetched, and when").
+    """
+    stmt = (
+        insert(Contact)
+        .values(
+            company_id=company_id,
+            kind=kind,
+            value=value,
+            confidence=enums.ContactConfidence.CONSTRUCTED,
+            source_id=None,
+        )
+        .on_conflict_do_nothing(constraint="uq_contacts_company_id_kind_value")
+    )
+    await session.execute(stmt)
+
+
+async def _drop_superseded_constructed(
+    session: AsyncSession, company_id: int, kind: enums.ContactKind, *, keep: str | None
+) -> int:
+    """Delete this company's ``constructed`` contacts of ``kind``, except the value in ``keep``.
+
+    Only ``constructed`` rows are ever in scope — a ``published`` row is an observation and is
+    untouchable here (SPEC §2, §5). See :func:`_ensure_constructed_contacts` for why a derived
+    row may be deleted at all.
+    """
+    stmt = delete(Contact).where(
+        Contact.company_id == company_id,
+        Contact.kind == kind,
+        Contact.confidence == enums.ContactConfidence.CONSTRUCTED,
+    )
+    if keep is not None:
+        stmt = stmt.where(Contact.value != keep)
+    return _rowcount(await session.execute(stmt))
+
+
+async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -> None:
+    """The two deterministic SPEC §6 links every company gets, reconciled against what the
+    company itself published.
+
+    SPEC §6 is a rule about the company, not about one connector's page: *"if the company's own
+    website footer links to LinkedIn, store that URL with ``confidence='published'``. Otherwise
+    construct ``https://www.linkedin.com/company/{slug}`` from the domain"*, and *"store a
+    people-search deep link"* for the user to click. So construction happens here, on **every
+    company upsert** — including the thousands the Tier-3 ``company_site`` connector has never
+    visited — rather than inside a connector that only ever sees the sites it was allowed to
+    fetch.
+
+    "Every upsert", not "every company in the database": this is the only call site and its only
+    caller is :func:`upsert_company_record`, so a company gets these links when it is *upserted*,
+    not because it exists. A database built under Phase 5 has them everywhere, because every row
+    in ``companies`` is written by that upsert; one carried over from an earlier phase gains them
+    company by company as each is next upserted, and nothing backfills the remainder (a row with
+    no ``website_url`` is skipped by ``company_site`` on every run for ever). ``docs/SOURCES.md``
+    states the same scope for the reader deciding whether to expect the links after an upgrade.
+
+    The **stored** ``name`` and ``domain`` are read back rather than taken from the record: an
+    ``enrich_only`` record (SPEC §4 Tier 2 #5) carries whatever name its feed used, while the
+    row holds the name the highest-priority connector supplied (SPEC §8). The people search
+    must be built from the latter, and after :func:`_update_company` has flushed, that is what
+    the read returns.
+
+    Order, per SPEC §6:
+
+    1. ``linkedin_company`` — a ``published`` row of this kind means the "otherwise" branch does
+       not apply, so nothing is constructed and any leftover constructed row is dropped. That is
+       the ``sourcegraph.com`` case: its footer publishes ``/company/4803356``, a numeric id that
+       can never equal the constructed ``/company/sourcegraph``, so without the drop a company
+       would show two different LinkedIn pages and one of them would be wrong. When the published
+       and the constructed URL happen to be identical, :func:`_upsert_contacts` has already
+       promoted the single row in place and there is nothing left to drop.
+       With no published row the constructed URL is written, and any *other* constructed row of
+       this kind goes: the domain changed, and the old slug points at somebody else's company.
+       A company with no usable domain gets no constructed URL and keeps whatever it has — a
+       slug guessed from nothing is a link to a stranger.
+    2. ``linkedin_people`` — the people-search deep link, rebuilt from the stored name, with any
+       constructed row carrying a different value dropped (the name was corrected, and the old
+       search finds the wrong company). ``published`` rows of this kind, if a connector ever
+       writes one, are left alone.
+
+    **Why deleting these rows does not violate "never delete on refresh" (SPEC §2, §5).** That
+    rule protects *observed* data: a job that disappeared from its board is history, so it gets
+    ``closed_at`` and stays queryable, and the same goes for every ``published`` contact — an
+    address the company once printed was true when we saw it. A ``constructed`` row is not an
+    observation at all. It is a pure function of the company's current ``name`` and ``domain``,
+    recomputed on every upsert; when an input changes, the old output is not a historical fact
+    but a dead search shortcut that silently sends the user to the wrong company. There is
+    nothing to preserve and something to get wrong, so it is deleted rather than kept. Nothing
+    in this function can touch a ``published`` row: the insert is ``DO NOTHING`` and every
+    delete filters on ``confidence = 'constructed'``.
+    """
+    result = await session.execute(
+        select(Company.name, Company.domain).where(Company.id == company_id)
+    )
+    stored = result.tuples().one_or_none()
+    if stored is None:  # only ``merge-review`` deletes companies
+        return
+    name, domain = stored
+
+    published_company_url = await session.scalar(
+        select(Contact.id)
+        .where(
+            Contact.company_id == company_id,
+            Contact.kind == enums.ContactKind.LINKEDIN_COMPANY,
+            Contact.confidence == enums.ContactConfidence.PUBLISHED,
+        )
+        .limit(1)
+    )
+    company_url = (
+        None if published_company_url is not None else constructed_linkedin_company_url(domain)
+    )
+    if company_url is not None:
+        await _insert_constructed_contact(
+            session, company_id, enums.ContactKind.LINKEDIN_COMPANY, company_url
+        )
+    if published_company_url is not None or company_url is not None:
+        # Skipped entirely when there is neither a published URL nor a domain to build one from:
+        # there is no better link to replace the stale one with, so keeping it loses nothing.
+        dropped = await _drop_superseded_constructed(
+            session, company_id, enums.ContactKind.LINKEDIN_COMPANY, keep=company_url
+        )
+        if dropped:
+            log.info(
+                "superseded constructed LinkedIn company link removed",
+                company_id=company_id,
+                removed=dropped,
+                published=published_company_url is not None,
+                kept=company_url,
+            )
+
+    # ``Company.name`` is NOT NULL but a connector may have supplied whitespace; a search for an
+    # empty phrase matches every company in the city, which is worse than offering no link.
+    if name.strip():
+        people_url = people_search_url(name)
+        await _insert_constructed_contact(
+            session, company_id, enums.ContactKind.LINKEDIN_PEOPLE, people_url
+        )
+        dropped = await _drop_superseded_constructed(
+            session, company_id, enums.ContactKind.LINKEDIN_PEOPLE, keep=people_url
+        )
+        if dropped:
+            log.info(
+                "superseded constructed people search removed",
+                company_id=company_id,
+                removed=dropped,
+            )
+
+
 async def _upsert_jobs(
     session: AsyncSession,
     company_id: int,
@@ -755,7 +918,10 @@ async def upsert_company_record(
     if the row was lost to a concurrent insert, re-resolve by domain and update) →
     ``CompanySource`` → one ``Source`` row per record per run that every child row points at
     (design decision 5) → locations → sectors → funding rounds and investors → people →
-    contacts → jobs → ``MergeCandidate`` rows for the trigram candidates when the company was
+    contacts, then the constructed SPEC §6 links reconciled against them
+    (:func:`_ensure_constructed_contacts`, which must run *after* ``_upsert_contacts`` so a
+    LinkedIn URL published in this very record already counts) → jobs →
+    ``MergeCandidate`` rows for the trigram candidates when the company was
     created (SPEC §8 step 3, never merged). ``last_seen_at = now`` on every touched company.
 
     ``regions`` defaults to ``config/regions.yaml`` (:func:`ingest.config.load_regions_config`);
@@ -832,6 +998,7 @@ async def upsert_company_record(
     await _upsert_funding_rounds(session, company_id, connector, record.funding_rounds, source.id)
     await _upsert_people(session, company_id, record.people, source.id)
     await _upsert_contacts(session, company_id, record.contacts, source.id)
+    await _ensure_constructed_contacts(session, company_id)
     await _upsert_jobs(session, company_id, connector, record, source.id, now=now)
     if created and resolution.candidates:
         merge_candidates += await record_merge_candidates(

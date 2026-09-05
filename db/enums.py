@@ -74,8 +74,20 @@ class RoleType(StrEnum):
 
 
 class ContactKind(StrEnum):
+    """How to reach a company (``Contact.kind``).
+
+    SPEC §5 lists six members; ``LINKEDIN_PEOPLE`` is a seventh, added by migration ``0002``.
+    SPEC §6 requires storing the constructed people-search deep link ("Find people →")
+    *alongside* the company page, and §6's last clause requires the UI to make the real
+    address and the search shortcut obviously different. Reusing ``LINKEDIN_COMPANY`` for
+    both would make them indistinguishable in a query and in the panel, so the search link
+    gets its own kind. Order matches the Postgres type: new members go last in the type
+    unless a migration says ``AFTER``, and ``0002`` says ``AFTER 'linkedin_company'``.
+    """
+
     EMAIL = "email"
     LINKEDIN_COMPANY = "linkedin_company"
+    LINKEDIN_PEOPLE = "linkedin_people"
     CAREERS_PAGE = "careers_page"
     X = "x"
     GITHUB = "github"

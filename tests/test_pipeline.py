@@ -1,6 +1,7 @@
 """``ingest.pipeline`` — ``FetchRun`` bookkeeping (SPEC §7.2), priority-aware upserts through
-``field_provenance`` (SPEC §8), never-deleted jobs (SPEC §2, §5) and the end-of-run refresh of
-the denormalized columns (SPEC §5).
+``field_provenance`` (SPEC §8), never-deleted jobs (SPEC §2, §5), the constructed LinkedIn links
+reconciled against what a company published (SPEC §6) and the end-of-run refresh of the
+denormalized columns (SPEC §5).
 
 Everything runs against the real migrated Postgres (``session_factory`` / ``session``
 fixtures, SPEC §3). Nothing touches the network: the :class:`FakeConnector` yields prepared
@@ -13,6 +14,7 @@ import asyncio
 from collections.abc import AsyncIterator, Iterable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import ValidationError
@@ -191,6 +193,31 @@ async def stored_run(session_factory: SessionFactory, run_id: int) -> FetchRun:
 async def merge_candidates(session: AsyncSession) -> list[MergeCandidate]:
     stmt = select(MergeCandidate).execution_options(populate_existing=True)
     return list((await session.execute(stmt)).scalars())
+
+
+async def stored_contacts(
+    session: AsyncSession, kind: enums.ContactKind | None = None
+) -> list[Contact]:
+    """This company's contacts in insertion order, optionally of one kind.
+
+    ``populate_existing`` because :mod:`ingest.pipeline` writes contacts with Core statements
+    (``INSERT ... ON CONFLICT``, ``DELETE``): a row already in the session's identity map would
+    otherwise be handed back with its pre-upsert ``confidence``.
+    """
+    stmt = select(Contact).execution_options(populate_existing=True).order_by(Contact.id)
+    if kind is not None:
+        stmt = stmt.where(Contact.kind == kind)
+    return list((await session.execute(stmt)).scalars())
+
+
+def search_keywords(url: str) -> str:
+    """The decoded ``keywords`` of a people-search deep link (SPEC §6 "People search").
+
+    Decoding is the point: it fails loudly if the link were assembled by string concatenation
+    instead of ``urlencode``, and it shows the expression the user actually searches with.
+    """
+    (keywords,) = parse_qs(urlsplit(url).query)["keywords"]
+    return keywords
 
 
 # ----------------------------------------------------------- priority (SPEC §8, decision 1)
@@ -1038,7 +1065,10 @@ async def test_child_rows_are_persisted_and_idempotent(
         "investors": 2,
         "round_investors": 2,
         "people": 2,
-        "contacts": 1,
+        # The published e-mail, plus the constructed people-search link every company gets
+        # (SPEC §6; see the ``_ensure_constructed_contacts`` section below). This record has no
+        # domain, so there is no constructed ``linkedin_company`` row.
+        "contacts": 2,
         "jobs": 2,
         "company_sources": 1,
     }
@@ -1089,7 +1119,7 @@ async def test_child_rows_are_persisted_and_idempotent(
             ("Jane Doe", "CEO", enums.RoleType.FOUNDER),
             ("John Roe", "Director", None),
         ]
-        (contact,) = (await session.execute(select(Contact))).scalars().all()
+        (contact,) = await stored_contacts(session, enums.ContactKind.EMAIL)
         assert (contact.kind, contact.value, contact.confidence) == (
             enums.ContactKind.EMAIL,
             "jobs@acme.com",
@@ -1224,8 +1254,7 @@ async def test_contacts_keep_published_over_constructed(session: AsyncSession) -
         }
 
     async def stored() -> enums.ContactConfidence:
-        stmt = select(Contact).execution_options(populate_existing=True)
-        (row,) = (await session.execute(stmt)).scalars().all()
+        (row,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)
         return row.confidence
 
     constructed = make_record(contacts=[contact(enums.ContactConfidence.CONSTRUCTED)])
@@ -1237,7 +1266,332 @@ async def test_contacts_keep_published_over_constructed(session: AsyncSession) -
     assert await stored() is enums.ContactConfidence.PUBLISHED
     await upsert_company_record(session, constructed, "hn_hiring", now=NOW)
     assert await stored() is enums.ContactConfidence.PUBLISHED
-    assert await count(session, Contact) == 1
+    # One LinkedIn company row throughout — the record has no domain, so the only other contact
+    # is the constructed people search of SPEC §6 (covered below).
+    assert len(await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)) == 1
+
+
+# ------------------------------- constructed contacts and reconciliation (SPEC §6)
+
+#: SPEC §6 "People search": the title keywords the deep link filters on, spelled as the SPEC
+#: spells them. They come from ``config/classifiers.yaml`` (``contacts.people_search_terms``),
+#: never from Python (CLAUDE.md), so this literal is what the YAML must keep producing.
+TITLE_TERMS = 'founder OR recruiter OR "head of engineering" OR "talent"'
+
+#: astranis.com's footer links to exactly the URL SPEC §6 constructs from its domain; the
+#: sourcegraph.com footer publishes a numeric company id, which no slug can ever equal.
+ASTRANIS_LINKEDIN = "https://www.linkedin.com/company/astranis"
+SOURCEGRAPH_LINKEDIN = "https://www.linkedin.com/company/sourcegraph"
+SOURCEGRAPH_PUBLISHED_LINKEDIN = "https://www.linkedin.com/company/4803356"
+
+
+def published_linkedin(value: str) -> dict[str, Any]:
+    """A ``linkedin_company`` contact as ``company_site`` reports one it read off a footer
+    (SPEC §6 C1) — already canonicalised by ``ingest.contacts``, which is why the value can be
+    compared with the constructed one as a string."""
+    return {
+        "kind": enums.ContactKind.LINKEDIN_COMPANY,
+        "value": value,
+        "confidence": enums.ContactConfidence.PUBLISHED,
+    }
+
+
+async def test_a_company_without_a_published_linkedin_gets_both_constructed_links(
+    session: AsyncSession,
+) -> None:
+    """SPEC §6's "otherwise" branch, for a company the Tier-3 connector has never visited: the
+    company URL is built from the domain and the people search from the name, both
+    ``constructed``, both with no ``Source`` — nothing was fetched to produce them, so there is
+    no fetch to point at (SPEC §5).
+
+    The people-search value is asserted whole to prove the expression is ``urlencode``d rather
+    than concatenated, and that nothing beyond SPEC §6's keywords is appended.
+    """
+    await upsert_company_record(
+        session,
+        make_record(name="Astranis Space Technologies", domain="astranis.com"),
+        "sec_edgar",
+        now=NOW,
+    )
+
+    company_link, people_link = await stored_contacts(session)  # exactly these two
+    assert (
+        company_link.kind,
+        company_link.value,
+        company_link.confidence,
+        company_link.source_id,
+    ) == (
+        enums.ContactKind.LINKEDIN_COMPANY,
+        ASTRANIS_LINKEDIN,
+        enums.ContactConfidence.CONSTRUCTED,
+        None,
+    )
+    assert (people_link.kind, people_link.confidence, people_link.source_id) == (
+        enums.ContactKind.LINKEDIN_PEOPLE,
+        enums.ContactConfidence.CONSTRUCTED,
+        None,
+    )
+    assert people_link.value == (
+        "https://www.linkedin.com/search/results/people/?keywords="
+        "%22Astranis+Space+Technologies%22+%28founder+OR+recruiter+OR"
+        "+%22head+of+engineering%22+OR+%22talent%22%29"
+    )
+    assert search_keywords(people_link.value) == f'"Astranis Space Technologies" ({TITLE_TERMS})'
+
+
+async def test_a_published_linkedin_url_removes_the_constructed_company_link(
+    session: AsyncSession,
+) -> None:
+    """SPEC §6 C1 beating C2 where the two values *cannot* coincide: sourcegraph.com's footer
+    publishes ``/company/4803356``, a numeric id. Keeping the constructed ``/company/sourcegraph``
+    alongside it would show two different LinkedIn pages for one company, and the one the company
+    did not publish would be a guess presented next to a fact. The people-search row is a
+    different kind and a different rule, so it survives untouched.
+    """
+    await upsert_company_record(
+        session, make_record(name="Sourcegraph", domain="sourcegraph.com"), "sec_edgar", now=NOW
+    )
+    assert [
+        row.value for row in await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)
+    ] == [SOURCEGRAPH_LINKEDIN]
+
+    await upsert_company_record(
+        session,
+        make_record(
+            name="Sourcegraph",
+            external_id=None,
+            domain="sourcegraph.com",
+            enrich_only=True,
+            contacts=[published_linkedin(SOURCEGRAPH_PUBLISHED_LINKEDIN)],
+        ),
+        "company_site",
+        now=NOW + DAY,
+    )
+
+    (company_link,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)
+    assert (company_link.value, company_link.confidence) == (
+        SOURCEGRAPH_PUBLISHED_LINKEDIN,
+        enums.ContactConfidence.PUBLISHED,
+    )
+    # A published row names the fetch that saw it; only a constructed row has no source.
+    assert company_link.source_id is not None
+    (people_link,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_PEOPLE)
+    assert (people_link.confidence, people_link.source_id) == (
+        enums.ContactConfidence.CONSTRUCTED,
+        None,
+    )
+    assert search_keywords(people_link.value) == f'"Sourcegraph" ({TITLE_TERMS})'
+
+
+async def test_a_published_url_equal_to_the_constructed_one_upgrades_the_row_in_place(
+    session: AsyncSession,
+) -> None:
+    """The common case: astranis.com's footer links to precisely the URL SPEC §6 would have
+    constructed. Both forms are canonicalised by the same code (``ingest.contacts``), so the
+    value is byte-identical, the upsert finds the existing row and promotes it — the company
+    ends with **one** LinkedIn row, marked ``published``, not two rows for one page with one of
+    them labelled a guess.
+    """
+    await upsert_company_record(
+        session, make_record(name="Astranis", domain="astranis.com"), "sec_edgar", now=NOW
+    )
+    (before,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)
+    assert (before.value, before.confidence) == (
+        ASTRANIS_LINKEDIN,
+        enums.ContactConfidence.CONSTRUCTED,
+    )
+
+    await upsert_company_record(
+        session,
+        make_record(
+            name="Astranis",
+            external_id=None,
+            domain="astranis.com",
+            enrich_only=True,
+            contacts=[published_linkedin(ASTRANIS_LINKEDIN)],
+        ),
+        "company_site",
+        now=NOW + DAY,
+    )
+
+    (after,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_COMPANY)
+    assert after.id == before.id  # promoted in place, not deleted and rewritten
+    assert (after.value, after.confidence) == (ASTRANIS_LINKEDIN, enums.ContactConfidence.PUBLISHED)
+    assert after.source_id is not None
+
+
+async def test_a_renamed_company_gets_one_rebuilt_people_search(session: AsyncSession) -> None:
+    """The people search is a pure function of the stored ``Company.name``, so a rename makes the
+    old row a link that searches for a company that no longer goes by that name. It is replaced,
+    not kept beside the new one: a constructed row is derived, never observed, so there is no
+    history in it to preserve (SPEC §2's "never delete" protects observed data).
+    """
+    await upsert_company_record(
+        session,
+        make_record(name="Acme Robotics", external_id=None, domain="acme.com"),
+        "hn_hiring",
+        now=NOW,
+    )
+    (before,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_PEOPLE)
+    assert search_keywords(before.value) == f'"Acme Robotics" ({TITLE_TERMS})'
+
+    # sec_edgar outranks hn_hiring, so this record renames the company (SPEC §8).
+    await upsert_company_record(
+        session,
+        make_record(name="Acme Robotics, Inc.", external_id="cik-1", domain="acme.com"),
+        "sec_edgar",
+        now=NOW + DAY,
+    )
+
+    (after,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_PEOPLE)
+    assert search_keywords(after.value) == f'"Acme Robotics, Inc." ({TITLE_TERMS})'
+    assert after.confidence is enums.ContactConfidence.CONSTRUCTED
+    assert after.source_id is None
+
+
+async def test_the_people_search_is_built_from_the_stored_name_not_the_records(
+    session: AsyncSession,
+) -> None:
+    """Construction reads the company row, not the record that triggered it.
+
+    An ``enrich_only`` record (SPEC §4 Tier 2 #5) names the company however the page it scraped
+    spells it, and SPEC §8 keeps the higher-ranked connector's name. If the link were built from
+    the record, every ``company_site`` refresh would throw away a good search shortcut and store
+    one made from a page title — which is also a name no LinkedIn search will match.
+    """
+    await upsert_company_record(
+        session,
+        make_record(name="Sourcegraph, Inc.", domain="sourcegraph.com"),
+        "sec_edgar",
+        now=NOW,
+    )
+    result = await upsert_company_record(
+        session,
+        make_record(
+            name="Sourcegraph | Code Intelligence Platform",
+            external_id=None,
+            domain="sourcegraph.com",
+            enrich_only=True,
+        ),
+        "company_site",
+        now=NOW + DAY,
+    )
+
+    company = await session.get(Company, result.company_id)
+    assert company is not None
+    assert company.name == "Sourcegraph, Inc."  # company_site does not outrank sec_edgar
+    (people_link,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_PEOPLE)
+    assert search_keywords(people_link.value) == f'"Sourcegraph, Inc." ({TITLE_TERMS})'
+
+
+async def test_a_company_without_a_domain_still_gets_the_people_search(
+    session: AsyncSession,
+) -> None:
+    """SPEC §6 constructs the company URL "from the domain", so a company with none gets no
+    ``linkedin_company`` row at all — a slug guessed from nothing links to a stranger. The people
+    search is built from the name, which every company has (``Company.name`` is NOT NULL), so it
+    is still written: an EDGAR-only company with no website is exactly who the user needs a way
+    to reach.
+    """
+    await upsert_company_record(
+        session, make_record(name="Nowhere Labs", domain=None), "sec_edgar", now=NOW
+    )
+
+    (people_link,) = await stored_contacts(session)  # the only contact this company has
+    assert (people_link.kind, people_link.confidence, people_link.source_id) == (
+        enums.ContactKind.LINKEDIN_PEOPLE,
+        enums.ContactConfidence.CONSTRUCTED,
+        None,
+    )
+    assert search_keywords(people_link.value) == f'"Nowhere Labs" ({TITLE_TERMS})'
+
+
+async def test_rerunning_the_same_record_leaves_every_contact_row_untouched(
+    session_factory: SessionFactory, http: HttpClient
+) -> None:
+    """Construction runs on every upsert, so it runs on every refresh of every company. The
+    ``id`` is asserted alongside the value: an implementation that deleted and re-inserted the
+    constructed rows each run would keep the same values while churning the primary keys (and
+    every foreign key a future phase might hang off them), and a plain count would not see it.
+    """
+    record = item(
+        name="Atom Computing",
+        domain="atom-computing.com",
+        contacts=[
+            {
+                "kind": enums.ContactKind.EMAIL,
+                "value": "hr@atom-computing.com",
+                "confidence": enums.ContactConfidence.PUBLISHED,
+            }
+        ],
+    )
+
+    await run(session_factory, http, [record])
+    async with session_factory() as session:
+        first = [
+            (row.id, row.kind, row.value, row.confidence) for row in await stored_contacts(session)
+        ]
+    assert len(first) == 3  # the published e-mail plus both constructed links
+
+    await run(session_factory, http, [record], now=NOW + DAY)
+    async with session_factory() as session:
+        rows = await stored_contacts(session)
+        newest_source = await session.scalar(select(func.max(Source.id)))
+
+    assert [(row.id, row.kind, row.value, row.confidence) for row in rows] == first
+    # The published e-mail is re-pointed at the second run's ``Source``; the constructed rows
+    # still have none, because the second run fetched nothing to build them from either.
+    sources = {row.kind: row.source_id for row in rows}
+    assert sources == {
+        enums.ContactKind.EMAIL: newest_source,
+        enums.ContactKind.LINKEDIN_COMPANY: None,
+        enums.ContactKind.LINKEDIN_PEOPLE: None,
+    }
+
+
+async def test_people_are_written_once_and_a_rerun_neither_duplicates_nor_erases_them(
+    session_factory: SessionFactory, http: HttpClient
+) -> None:
+    """SPEC §5 ``Person`` as SPEC §6 fills it: ``linkedin_url`` is a profile link the company
+    published on its own team page — nothing fetches the profile (SPEC §4 excludes LinkedIn).
+
+    Two rules in one run: the second run must not add a second "Ben Bloom", and a later record
+    that only knows the name (a filing lists officers with no title) must not blank the title,
+    role type and profile URL the team page supplied.
+    """
+    published_person: dict[str, Any] = {
+        "full_name": "Ben Bloom",
+        "title": "CEO & Founder",
+        "role_type": enums.RoleType.FOUNDER,
+        "linkedin_url": "https://www.linkedin.com/in/benbloom",
+    }
+    record = item(name="Atom Computing", domain="atom-computing.com", people=[published_person])
+
+    await run(session_factory, http, [record])
+    await run(session_factory, http, [record], now=NOW + DAY)
+    await run(
+        session_factory,
+        http,
+        [
+            item(
+                name="Atom Computing",
+                domain="atom-computing.com",
+                people=[{"full_name": "Ben Bloom"}],
+            )
+        ],
+        now=NOW + 2 * DAY,
+    )
+
+    async with session_factory() as session:
+        people = (await session.execute(select(Person).order_by(Person.id))).scalars().all()
+    assert [(p.full_name, p.title, p.role_type, p.linkedin_url) for p in people] == [
+        (
+            "Ben Bloom",
+            "CEO & Founder",
+            enums.RoleType.FOUNDER,
+            "https://www.linkedin.com/in/benbloom",
+        )
+    ]
 
 
 # ------------------------------------------------------ jobs (SPEC §2, §5; decision 6)

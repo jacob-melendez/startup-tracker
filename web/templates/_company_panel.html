@@ -15,7 +15,9 @@
 
   It reads only relationships the route eager-loads (`funding_rounds -> investor_links ->
   investor`, `location_links -> location`, `sector_links -> sector`, `contacts`, `people`,
-  `source_links`) plus the `jobs` and `note` context keys. Touching an unloaded relationship
+  `source_links`) plus the `jobs`, `contacts` and `note` context keys — `contacts` here being
+  the route's published/constructed split of `company.contacts`, not the relationship of the
+  same name, which section 5 must not read directly. Touching an unloaded relationship
   would emit lazy IO from inside a template on an async session — always a bug, and under
   asyncio an immediate `MissingGreenlet`. Funding rounds arrive newest-first from the route.
 
@@ -266,32 +268,62 @@
 </section>
 
 {#- 5. Contacts ---------------------------------------------------------------------------- #}
+{#- One contact row. `linkedin_people` is the odd one out on purpose: SPEC §6 says the UI
+    renders the people search "as a 'Find people →' button", so it gets the control and drops
+    the muted kind prefix that would otherwise print its label twice. Everything else is a
+    labelled value. The confidence badge stays on every row even though the group heading above
+    already says which half this is — §6 asks for the distinction to be obvious, and a badge
+    travels with the row when it is copied, screenshotted or read out of order. -#}
+{%- macro contact_row(contact) -%}
+<li>
+  {%- if contact.kind == 'linkedin_people' %}
+  {{ chips.external_link(contact.value, 'Find people →', 'button') }}
+  {%- else %}
+  <span class="muted">{{ contact.kind | label }}</span>
+  {%- if contact.kind == 'email' %}
+  {#- Not a URL, so `safe_url` does not apply; the scheme is hard-coded here and the
+      value is autoescaped, so nothing user-sourced can change the scheme.
+
+      This comment ends without a trailing `-`: the newline after it is the only whitespace
+      between the kind label and the address, and stripping it renders "Emailhr@acme.com". #}
+  <a href="mailto:{{ contact.value }}">{{ contact.value }}</a>
+  {%- else %}
+  {{ chips.external_link(contact.value, contact.value) }}
+  {%- endif %}
+  {%- endif %}
+  {{ chips.confidence_badge(contact.confidence) }}
+</li>
+{%- endmacro -%}
 <section class="panel-section">
   <h2>Contacts</h2>
-  {%- if company.contacts %}
-  <ul>
-    {%- for contact in company.contacts %}
-    <li>
-      <span class="muted">{{ contact.kind | label }}</span>
-      {% if contact.kind == 'email' %}
-      {#- Not a URL, so `safe_url` does not apply; the scheme is hard-coded here and the
-          value is autoescaped, so nothing user-sourced can change the scheme. -#}
-      <a href="mailto:{{ contact.value }}">{{ contact.value }}</a>
-      {%- else %}
-      {{ chips.external_link(contact.value, contact.value) }}
-      {%- endif %}
-      {{ chips.confidence_badge(contact.confidence) }}
-    </li>
-    {%- endfor %}
+  {#- `contacts` is the route's published/constructed split, not `company.contacts`: SPEC §6's
+      last clause is about what the reader sees, so the two halves are two separate lists under
+      two headings rather than one list distinguished only by a badge. -#}
+  {%- if contacts.published or contacts.constructed %}
+  <p class="muted">Published contacts come from the company&rsquo;s own pages; search shortcuts
+    are links built from its name and domain &mdash; a starting point, not a verified address.</p>
+  <h3 class="contact-group">Published by the company</h3>
+  {%- if contacts.published %}
+  <ul class="contacts">
+    {%- for contact in contacts.published %}{{ contact_row(contact) }}{% endfor %}
   </ul>
-  <p class="muted">SPEC §6: <strong>published</strong> means the company itself published it;
-    <strong>constructed</strong> is a deterministic search shortcut we built — never a verified
-    address, and no profile is ever fetched.</p>
+  {%- else %}
+  <p class="muted">Nothing published on their own site yet.</p>
+  {%- endif %}
+  <h3 class="contact-group">Search shortcuts (constructed)</h3>
+  {%- if contacts.constructed %}
+  <ul class="contacts">
+    {%- for contact in contacts.constructed %}{{ contact_row(contact) }}{% endfor %}
+  </ul>
+  {%- else %}
+  <p class="muted">None built for this company.</p>
+  {%- endif %}
   {%- else %}
   <p class="muted">No contacts on file yet.</p>
   {%- endif %}
   {%- if company.people %}
-  <ul>
+  <h3 class="contact-group">People</h3>
+  <ul class="contacts">
     {%- for person in company.people %}
     <li>
       {{ person.full_name }}
@@ -301,6 +333,12 @@
     </li>
     {%- endfor %}
   </ul>
+  {#- Only worth saying when there is a link to say it about: an EDGAR officer list has names
+      and titles and no profile URL at all, and the sentence would be about nothing. -#}
+  {%- if company.people | selectattr('linkedin_url') | list %}
+  <p class="muted">Every profile link here was published on the company&rsquo;s own site; no
+    LinkedIn page is ever fetched (SPEC §4, §6).</p>
+  {%- endif %}
   {%- endif %}
 </section>
 
