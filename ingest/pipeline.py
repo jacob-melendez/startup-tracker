@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from sqlalchemy import ColumnElement, CursorResult, Select, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -669,8 +669,12 @@ async def _upsert_contacts(
 
 async def _insert_constructed_contact(
     session: AsyncSession, company_id: int, kind: enums.ContactKind, value: str
-) -> None:
+) -> int:
     """Write one ``confidence='constructed'`` contact, leaving an existing row alone.
+
+    Returns 1 when a row was written and 0 when one was already there — which is what lets
+    :func:`sync_constructed_contacts` report how much of a database it actually changed rather
+    than how many companies it looked at.
 
     ``ON CONFLICT DO NOTHING`` rather than :func:`_upsert_contacts`' ``DO UPDATE``: the stored
     row for this exact value may already be ``published`` (a footer that links to precisely the
@@ -693,7 +697,7 @@ async def _insert_constructed_contact(
         )
         .on_conflict_do_nothing(constraint="uq_contacts_company_id_kind_value")
     )
-    await session.execute(stmt)
+    return _rowcount(await session.execute(stmt))
 
 
 async def _drop_superseded_constructed(
@@ -715,7 +719,21 @@ async def _drop_superseded_constructed(
     return _rowcount(await session.execute(stmt))
 
 
-async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -> None:
+class ConstructedContactChanges(NamedTuple):
+    """What :func:`_ensure_constructed_contacts` actually wrote for one company.
+
+    Both counts are zero for a company already holding the right rows, which is every company
+    on the second pass — the reconciliation is idempotent, and these counters are how
+    :func:`sync_constructed_contacts` can say so out loud instead of claiming work it did not do.
+    """
+
+    added: int = 0
+    removed: int = 0
+
+
+async def _ensure_constructed_contacts(
+    session: AsyncSession, company_id: int
+) -> ConstructedContactChanges:
     """The two deterministic SPEC §6 links every company gets, reconciled against what the
     company itself published.
 
@@ -727,19 +745,32 @@ async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -
     visited — rather than inside a connector that only ever sees the sites it was allowed to
     fetch.
 
-    "Every upsert", not "every company in the database": this is the only call site and its only
-    caller is :func:`upsert_company_record`, so a company gets these links when it is *upserted*,
-    not because it exists. A database built under Phase 5 has them everywhere, because every row
-    in ``companies`` is written by that upsert; one carried over from an earlier phase gains them
-    company by company as each is next upserted, and nothing backfills the remainder (a row with
-    no ``website_url`` is skipped by ``company_site`` on every run for ever). ``docs/SOURCES.md``
-    states the same scope for the reader deciding whether to expect the links after an upgrade.
+    "Every upsert", not "every company in the database": :func:`upsert_company_record` is the
+    ingest call site, so a company gets these links when it is *upserted*, not because it exists.
+    A database built under Phase 5 has them everywhere, because every row in ``companies`` is
+    written by that upsert; one carried over from an earlier phase gains them company by company
+    as each is next upserted, and a row no connector ever re-lists — one with neither a
+    ``website_url`` nor a ``domain``, which leaves :attr:`CompanyTarget.home_url` ``None`` so
+    ``company_site`` skips it on every run for ever — would never gain them at all. That
+    remainder is what :func:`sync_constructed_contacts` (``cli.py sync-contacts``) exists for.
+    ``docs/SOURCES.md`` states the same scope for the reader deciding whether to expect the links
+    after an upgrade.
 
     The **stored** ``name`` and ``domain`` are read back rather than taken from the record: an
     ``enrich_only`` record (SPEC §4 Tier 2 #5) carries whatever name its feed used, while the
     row holds the name the highest-priority connector supplied (SPEC §8). The people search
     must be built from the latter, and after :func:`_update_company` has flushed, that is what
     the read returns.
+
+    That read takes ``SELECT ... FOR UPDATE``, the same row lock :func:`_update_company` holds,
+    because everything below is *written from it*: without the lock a caller can read one name,
+    have another transaction commit a new one plus its rebuilt links, and then delete those
+    committed rows as "superseded" — its ``keep`` values still being the old ones — leaving the
+    company pointing at somebody else's LinkedIn page. On the ingest path the lock is already
+    held by :func:`_update_company` (or implied by the insert that just created the row), so it
+    costs nothing there; it exists for :func:`sync_constructed_contacts`, which reconciles
+    companies no upsert is touching and would otherwise be the one writer here that can
+    interleave with one that is.
 
     Order, per SPEC §6:
 
@@ -771,12 +802,14 @@ async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -
     delete filters on ``confidence = 'constructed'``.
     """
     result = await session.execute(
-        select(Company.name, Company.domain).where(Company.id == company_id)
+        select(Company.name, Company.domain).where(Company.id == company_id).with_for_update()
     )
     stored = result.tuples().one_or_none()
     if stored is None:  # only ``merge-review`` deletes companies
-        return
+        return ConstructedContactChanges()
     name, domain = stored
+    added = 0
+    removed = 0
 
     published_company_url = await session.scalar(
         select(Contact.id)
@@ -791,7 +824,7 @@ async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -
         None if published_company_url is not None else constructed_linkedin_company_url(domain)
     )
     if company_url is not None:
-        await _insert_constructed_contact(
+        added += await _insert_constructed_contact(
             session, company_id, enums.ContactKind.LINKEDIN_COMPANY, company_url
         )
     if published_company_url is not None or company_url is not None:
@@ -800,6 +833,7 @@ async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -
         dropped = await _drop_superseded_constructed(
             session, company_id, enums.ContactKind.LINKEDIN_COMPANY, keep=company_url
         )
+        removed += dropped
         if dropped:
             log.info(
                 "superseded constructed LinkedIn company link removed",
@@ -813,18 +847,123 @@ async def _ensure_constructed_contacts(session: AsyncSession, company_id: int) -
     # empty phrase matches every company in the city, which is worse than offering no link.
     if name.strip():
         people_url = people_search_url(name)
-        await _insert_constructed_contact(
+        added += await _insert_constructed_contact(
             session, company_id, enums.ContactKind.LINKEDIN_PEOPLE, people_url
         )
         dropped = await _drop_superseded_constructed(
             session, company_id, enums.ContactKind.LINKEDIN_PEOPLE, keep=people_url
         )
+        removed += dropped
         if dropped:
             log.info(
                 "superseded constructed people search removed",
                 company_id=company_id,
                 removed=dropped,
             )
+    return ConstructedContactChanges(added=added, removed=removed)
+
+
+@dataclass(frozen=True, slots=True)
+class ContactSyncResult:
+    """What one :func:`sync_constructed_contacts` sweep did."""
+
+    companies: int
+    added: int
+    removed: int
+    dry_run: bool
+
+    @property
+    def changed(self) -> int:
+        """Rows written plus rows dropped — zero on a database already in the right state."""
+        return self.added + self.removed
+
+
+#: Companies per keyset page in :func:`sync_constructed_contacts` — the size of one ``SELECT
+#: id`` round trip, *not* of a transaction: every company is committed on its own, so that the
+#: row lock the reconciliation takes ends with it. Large enough that a 3 000-company database
+#: is a handful of queries rather than one per row.
+CONTACT_SYNC_BATCH = 500
+
+
+async def sync_constructed_contacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    batch_size: int = CONTACT_SYNC_BATCH,
+    dry_run: bool = False,
+) -> ContactSyncResult:
+    """Run :func:`_ensure_constructed_contacts` over **every** company in the database.
+
+    The ingest path builds SPEC §6's constructed links when a company is upserted, which covers
+    every company a connector still re-lists. It cannot reach the rest: a Form D company outside
+    the incremental window, a seeded row (``seed`` is not in ``refresh --all``), a company with
+    neither a ``website_url`` nor a ``domain``, which ``company_site`` skips for ever (its work
+    list is :attr:`CompanyTarget.home_url`, which falls back to ``https://{domain}/``), or one
+    whose site simply never answers, so the visit yields no record to upsert. This is the sweep
+    that reaches them — the tool for a database carried over from an earlier phase, and the
+    repair for one that drifted.
+
+    It writes nothing else. Only ``constructed`` contacts are inserted or dropped, by exactly the
+    reconciliation :func:`_ensure_constructed_contacts` documents; a ``published`` row is never
+    touched, no company column changes, and no ``FetchRun`` is written — nothing was fetched, so
+    SPEC §7.2 has nothing to record. Running it twice is running it once: the second sweep
+    reports ``added=0 removed=0``.
+
+    Paged by keyset over ``companies.id`` — ``batch_size`` ids per query — and committed one
+    company at a time, so an interrupt leaves a committed prefix and the rest simply
+    unreconciled, never half a company. ``dry_run`` does every read and every write and then
+    rolls each company back, so its counts are what a real sweep would change, not an estimate.
+
+    Safe to run against a live scheduler. Each company is reconciled under the row lock
+    :func:`_ensure_constructed_contacts` takes — the one :func:`_update_company` holds — so a
+    concurrent upsert of the same company waits its turn instead of interleaving with a sweep
+    that would then delete the links it had just committed. The commit is per company rather
+    than per page precisely because of that lock: held across 500 rows it would stall an ingest
+    run, and could deadlock against the end-of-run ``UPDATE companies`` of
+    :func:`refresh_company_denormalized_columns`, which locks rows in its own order.
+    """
+    if batch_size < 1:
+        msg = f"batch_size must be at least 1, got {batch_size}"
+        raise ValueError(msg)
+    companies = 0
+    added = 0
+    removed = 0
+    after = 0
+    log.info("contact sync started", batch_size=batch_size, dry_run=dry_run)
+    while True:
+        async with session_factory() as session:
+            ids = list(
+                await session.scalars(
+                    select(Company.id)
+                    .where(Company.id > after)
+                    .order_by(Company.id)
+                    .limit(batch_size)
+                )
+            )
+            if not ids:
+                break
+            for company_id in ids:
+                changes = await _ensure_constructed_contacts(session, company_id)
+                added += changes.added
+                removed += changes.removed
+                if dry_run:
+                    # The reads and the writes really happened; the rollback is what discards
+                    # them. Per company rather than per page, because it also ends the row lock.
+                    await session.rollback()
+                else:
+                    await session.commit()
+            companies += len(ids)
+            if dry_run:
+                log.debug("contact sync page discarded", through=ids[-1], dry_run=True)
+        after = ids[-1]
+    result = ContactSyncResult(companies=companies, added=added, removed=removed, dry_run=dry_run)
+    log.info(
+        "contact sync finished",
+        companies=result.companies,
+        added=result.added,
+        removed=result.removed,
+        dry_run=dry_run,
+    )
+    return result
 
 
 async def _upsert_jobs(

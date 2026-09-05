@@ -501,12 +501,22 @@ Because a constructed value is derived from the company's current name and domai
 than kept; that is not the "never delete on refresh" rule of SPEC §2/§5, which is about *observed*
 data such as a job that disappeared from its board.
 
-Construction is part of the upsert rather than a sweep over the table. Every row in `companies` is
-written by that upsert, so a database built under Phase 5 carries both links everywhere; a database
-migrated from an earlier phase gains them company by company, as each is next upserted, and nothing
-backfills the remainder. A company with no `website_url` — every EDGAR-only row — is not visited by
-`company_site` at all, so for those the links arrive only when some other connector re-upserts the
-company.
+Construction is part of the upsert, not something the ingest run sweeps for. Every row in
+`companies` is written by that upsert, so a database built under Phase 5 carries whichever of the
+two links the row can have, everywhere; a database migrated from an earlier phase gains them
+company by company, as each is next upserted. The remainder is what `python cli.py sync-contacts`
+is for: it runs the same reconciliation over every company in the table, writes nothing else, and
+reports `added=0 removed=0` when there was nothing to do. Run it once after upgrading a database —
+otherwise a company no connector re-lists never gains its links at all, and a row with neither a
+`website_url` nor a `domain` (every EDGAR-only company, because Form D carries no website or
+domain) is one `company_site` skips on every run for ever. A domain alone is enough to be
+*visited* — `CompanyTarget.home_url` falls back to `https://{domain}/` — but not to be upserted:
+a site that declines or never answers yields no record, so those rows need the sweep too.
+
+`sync-contacts` fetches nothing, so it writes no `fetch_runs` row, and it touches only
+`confidence='constructed'` contacts — a published address is never altered. `--dry-run` does the
+whole sweep and discards it, so its counts are what a real run would change rather than an
+estimate.
 
 ### Known limitations and deliberate omissions
 

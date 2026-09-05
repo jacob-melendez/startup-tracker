@@ -24,14 +24,15 @@ import alembic.command
 import pytest
 import structlog
 from alembic.config import Config as AlembicConfig
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typer.core import TyperGroup
 from typer.main import get_command
 from typer.testing import CliRunner, Result
 
 import cli
 from db import enums
-from db.models import FetchRun
+from db.models import Base, Company, Contact, FetchRun
 from db.queries import COMPLETED_RUN_STATUSES
 from db.session import dispose_engine
 from ingest.base import CompanyRecord, Connector, FetchContext
@@ -44,6 +45,8 @@ from ingest.config import (
 from ingest.connectors import all_connectors
 from ingest.connectors.sec_edgar import SecEdgarConnector
 from ingest.http import FileCache, HttpClient, MemoryCache
+from ingest.normalize import normalize_name
+from ingest.pipeline import CONTACT_SYNC_BATCH, ContactSyncResult
 from ingest.seed import SeedConnector
 from logging_config import get_logger
 from settings import Settings, get_settings
@@ -759,3 +762,170 @@ def test_makefile_notes_track_the_commands_cli_py_registers() -> None:
             assert f"the {command} command arrives in Phase" in help_text, (
                 f"{name}: {help_text!r} must say which phase the {command!r} command arrives in"
             )
+
+
+# ------------------------------------------------------------------ sync-contacts (SPEC §6)
+
+
+@pytest.fixture
+def empty_database(migrated_database: str) -> str:
+    """Every table truncated before the test runs.
+
+    The CLI tests share one session-scoped database and most of them never write to it, so
+    conftest's truncating ``engine`` fixture is async and out of reach from a ``CliRunner``
+    test. These four write and then assert on counts, so they need the same guarantee: emptied
+    at setup, left alone at teardown, so a failure can be inspected.
+    """
+
+    async def truncate() -> None:
+        engine = create_async_engine(migrated_database)
+        tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(truncate())
+    return migrated_database
+
+
+def seed_company(name: str, domain: str | None) -> int:
+    """One company written straight into the disposable database, the way a phase before this
+    one left them: a row with no constructed SPEC §6 links, which no upsert will ever revisit."""
+
+    async def write() -> int:
+        engine = create_async_engine(_configured_url())
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                async with session.begin():
+                    company = Company(
+                        name=name, normalized_name=normalize_name(name), domain=domain
+                    )
+                    session.add(company)
+                    await session.flush()
+                    company_id = company.id
+                return company_id
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(write())
+
+
+def stored_contact_values() -> set[str]:
+    async def read() -> set[str]:
+        engine = create_async_engine(_configured_url())
+        try:
+            async with async_sessionmaker(engine)() as session:
+                return set((await session.scalars(select(Contact.value))).all())
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(read())
+
+
+def _configured_url() -> str:
+    """The database ``cli_env`` pointed the CLI at — the same one the command will write to."""
+    return get_settings().database_url
+
+
+def test_sync_contacts_builds_the_links_and_reports_what_it_wrote(
+    runner: CliRunner, empty_database: str
+) -> None:
+    """The command exists for exactly this database: a company the ingest path never upserted,
+    which therefore has none of SPEC §6's constructed links and never would."""
+    seed_company("Astranis", "astranis.com")
+
+    result = invoke(runner, "sync-contacts")
+
+    assert result.exit_code == 0, result.output
+    assert "sync-contacts  companies=1  added=2  removed=0" in result.stdout
+    assert "dry run" not in result.stdout
+    assert "already in sync" not in result.stdout
+    values = stored_contact_values()
+    assert "https://www.linkedin.com/company/astranis" in values
+    assert any("/search/results/people/" in value for value in values)
+
+    # A second invocation is the operator's "did that work?" — three zeroes need a word, or
+    # they read as a command that failed to find anything to do.
+    again = invoke(runner, "sync-contacts")
+    assert again.exit_code == 0, again.output
+    assert "companies=1  added=0  removed=0  (already in sync)" in again.stdout
+    assert stored_contact_values() == values
+
+
+def test_sync_contacts_dry_run_writes_nothing_and_says_so(
+    runner: CliRunner, empty_database: str
+) -> None:
+    """A command that touches every company needs a way to be asked first. The counts are the
+    real ones — the sweep runs in full and the transaction is discarded."""
+    seed_company("Astranis", "astranis.com")
+
+    result = invoke(runner, "sync-contacts", "--dry-run")
+
+    assert result.exit_code == 0, result.output
+    assert "companies=1  added=2  removed=0  (dry run — nothing written)" in result.stdout
+    assert stored_contact_values() == set()
+
+
+def test_sync_contacts_disposes_the_engine(
+    runner: CliRunner, dispose_calls: list[int], empty_database: str
+) -> None:
+    """Each ``asyncio.run`` gets a fresh event loop and an asyncpg pool must be closed on the
+    loop that created it, so every command that opens one closes it (as ``refresh`` does)."""
+    seed_company("Astranis", "astranis.com")
+
+    assert invoke(runner, "sync-contacts").exit_code == 0
+
+    assert dispose_calls == [1]
+
+
+def test_sync_contacts_rejects_a_batch_size_below_one(runner: CliRunner) -> None:
+    """Typer's ``min=1`` catches it as a usage error, before a connection is opened."""
+    result = invoke(runner, "sync-contacts", "--batch-size", "0")
+
+    assert result.exit_code != 0
+    assert "batch-size" in result.output.lower()
+
+
+def test_sync_contacts_forwards_the_batch_size_it_was_given(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag that is accepted, validated by Typer and then dropped is invisible to every gate
+    this project has: with the constant hard-wired into the call instead of the argument, ruff,
+    ``mypy --strict`` and the whole suite still pass, and stdout is byte-identical to an honest
+    run. The sweep's own test proves ``batch_size`` is *used*; this proves it arrives.
+    """
+    calls: list[tuple[int, bool]] = []
+
+    async def record(
+        session_factory: async_sessionmaker[AsyncSession], *, batch_size: int, dry_run: bool
+    ) -> ContactSyncResult:
+        calls.append((batch_size, dry_run))
+        return ContactSyncResult(companies=0, added=0, removed=0, dry_run=dry_run)
+
+    monkeypatch.setattr(cli, "sync_constructed_contacts", record)
+
+    assert invoke(runner, "sync-contacts", "--batch-size", "25").exit_code == 0
+    assert invoke(runner, "sync-contacts", "--dry-run").exit_code == 0
+
+    assert calls == [(25, False), (CONTACT_SYNC_BATCH, True)]
+
+
+def test_the_readme_upgrade_section_promises_only_the_links_a_row_can_have() -> None:
+    """SPEC §6 builds the LinkedIn *company* URL from the domain, so a company without one — an
+    EDGAR-only Form D row, 53 of the 3,188 on the developer's own database — gets the people
+    search and nothing else, sweep or no sweep.
+
+    The upgrade section names exactly that kind of company as the reason to run ``sync-contacts``
+    and then says one sweep fixes it. Without the caveat the operator opens a company page,
+    finds no LinkedIn link where the README promised one, and goes looking for a bug in the
+    command. The same paragraph must also name ``company_site``'s real skip condition: it works
+    from ``CompanyTarget.home_url``, which falls back to ``https://{domain}/``, so a row with a
+    domain and no website is visited every week like any other.
+    """
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    assert "the company link is built from the domain" in text
+    assert "gets the people search alone" in text
+    assert "neither a website nor a domain" in text
+    assert "a company with no website for `company_site` to visit" not in text

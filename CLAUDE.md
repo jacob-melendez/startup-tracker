@@ -71,4 +71,5 @@ v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app,
 - `ruff` clean and `mypy --strict` passing on `ingest/` and `db/` before a phase is called done (§13).
 - `pytest` + `pytest-asyncio`; DB tests run against a disposable Postgres (testcontainers or Compose).
 - Docker Compose services `db`, `app`, `scheduler`; `make up` is the only setup step.
-- Makefile targets: `up down migrate seed refresh test lint`. CLI: `migrate seed refresh stats merge-review`.
+- Makefile targets: `up down migrate seed refresh test lint`. CLI: `migrate seed refresh stats merge-review`,
+  plus `sync-contacts` (§6's constructed links across a whole database — local only, fetches nothing).

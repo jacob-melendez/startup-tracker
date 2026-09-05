@@ -1,6 +1,8 @@
 """Command-line entry point (SPEC §11 ``cli.py``).
 
-Three commands so far:
+Four commands so far. SPEC §11 names five (``migrate seed refresh stats merge-review``);
+``sync-contacts`` is the one addition — local reconciliation, nothing fetched — and CLAUDE.md
+records it, the way the Makefile reconciles its own target list against the same section.
 
 * ``migrate`` — ``alembic upgrade head`` through the Alembic API, the same thing ``make migrate``
   runs inside Compose (SPEC §3: Alembic owns all DDL).
@@ -13,6 +15,11 @@ Three commands so far:
   ``fetch_runs`` row, success or failure (SPEC §7.2) — the one exception being a run whose row
   could not be written at all (database unreachable), which the summary line marks with
   :data:`NOT_RECORDED` so stdout never claims a row that does not exist.
+* ``sync-contacts`` — rebuild SPEC §6's *constructed* LinkedIn links across the whole database.
+  The odd one out: it fetches nothing and writes no ``fetch_runs`` row, because it is pure local
+  reconciliation. The ingest path already does this per company as it upserts one; this reaches
+  the companies no connector re-lists, which is what a database carried over from an earlier
+  phase is full of.
 
 ``stats`` and ``merge-review`` (Phase 6) join later.
 
@@ -41,7 +48,12 @@ from ingest.base import Connector
 from ingest.config import ConnectorConfig, load_connectors_config, load_regions_config
 from ingest.connectors import all_connectors
 from ingest.http import FileCache, HttpClient
-from ingest.pipeline import run_connector
+from ingest.pipeline import (
+    CONTACT_SYNC_BATCH,
+    ContactSyncResult,
+    run_connector,
+    sync_constructed_contacts,
+)
 from ingest.seed import SeedConnector
 from logging_config import configure_logging, get_logger
 from settings import Settings, get_settings
@@ -395,6 +407,64 @@ def migrate() -> None:
     The same thing `make migrate` runs inside Compose (SPEC §3: Alembic owns all DDL).
     """
     alembic_command.upgrade(AlembicConfig(str(ALEMBIC_INI)), "head")
+
+
+async def sync_contacts_once(*, batch_size: int, dry_run: bool) -> ContactSyncResult:
+    """One sweep behind a fresh engine, disposed on the way out like `refresh_all` does."""
+    try:
+        return await sync_constructed_contacts(
+            get_session_factory(), batch_size=batch_size, dry_run=dry_run
+        )
+    finally:
+        await dispose_engine()
+
+
+@app.command(name="sync-contacts")
+def sync_contacts(
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Do the whole sweep and discard it, reporting exactly what it would change.",
+        ),
+    ] = False,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            metavar="N",
+            min=1,
+            help="Companies read per keyset page; each one is committed on its own.",
+        ),
+    ] = CONTACT_SYNC_BATCH,
+) -> None:
+    """Rebuild SPEC §6's constructed LinkedIn links for every company in the database.
+
+    The ingest pipeline builds them whenever it upserts a company, so a database populated
+    under Phase 5 already has them. This is for the rest: a database carried over from an
+    earlier phase, where a company no connector re-lists — a Form D outside the incremental
+    window, a seeded row (`seed` is not in `refresh --all`), a row with neither a website_url
+    nor a domain for `company_site` to visit — would otherwise never gain its links at all.
+    A company with no domain gets the people search only: SPEC §6 builds the company URL from
+    the domain, and a slug guessed from nothing links to a stranger.
+
+    Reads and writes only the local database; nothing is fetched, so no fetch_runs row is
+    written. It touches `confidence='constructed'` contacts and nothing else: a published
+    address is never altered, and re-running changes nothing (`added=0 removed=0`).
+    """
+    result = asyncio.run(sync_contacts_once(batch_size=batch_size, dry_run=dry_run))
+    if result.dry_run:
+        suffix = "  (dry run — nothing written)"
+    elif not result.changed:
+        # Worth saying out loud: three zeroes on a 3 000-company database look like a command
+        # that did not run, and this is the answer a second invocation is supposed to give.
+        suffix = "  (already in sync)"
+    else:
+        suffix = ""
+    typer.echo(
+        f"sync-contacts  companies={result.companies}  added={result.added}  "
+        f"removed={result.removed}{suffix}"
+    )
 
 
 if __name__ == "__main__":

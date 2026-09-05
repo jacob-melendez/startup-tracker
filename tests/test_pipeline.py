@@ -13,12 +13,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterable, Sequence
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import delete, event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db import enums
@@ -43,17 +43,20 @@ from db.models import (
 from db.queries import refresh_company_denormalized_columns
 from ingest.base import CompanyRecord, Connector, FetchContext
 from ingest.config import ConnectorConfig, load_regions_config
+from ingest.contacts import people_search_url
 from ingest.http import HttpClient, MemoryCache
-from ingest.normalize import TRIGRAM_THRESHOLD
+from ingest.normalize import TRIGRAM_THRESHOLD, normalize_name
 from ingest.pipeline import (
     COMPANY_MERGE_FIELDS,
     CONNECTOR_PRIORITY,
     ERROR_TEXT_LIMIT,
+    ContactSyncResult,
     UpsertResult,
     connector_rank,
     join_error_messages,
     merge_company_fields,
     run_connector,
+    sync_constructed_contacts,
     upsert_company_record,
 )
 
@@ -1734,3 +1737,377 @@ async def test_refresh_is_not_part_of_the_upsert(session: AsyncSession) -> None:
     assert await refresh_company_denormalized_columns(session, [result.company_id]) == 1
     await session.refresh(company)
     assert (company.open_job_count, company.latest_job_posted_at) == (1, NOW)
+
+
+# ------------------------------- sync_constructed_contacts (SPEC §6, cli.py sync-contacts)
+
+
+async def insert_company(session: AsyncSession, name: str, domain: str | None) -> int:
+    """A company written straight to the table, bypassing ``upsert_company_record``.
+
+    That is the state the sweep exists for and the only way to reach it: every company the
+    ingest path writes already has its constructed links, so a company *without* them is one
+    that predates Phase 5 — or, as here, one the pipeline never saw.
+    """
+    company = Company(name=name, normalized_name=normalize_name(name), domain=domain)
+    session.add(company)
+    await session.flush()
+    return company.id
+
+
+async def test_the_sweep_reaches_a_company_no_upsert_ever_touched(
+    session_factory: SessionFactory,
+) -> None:
+    """The whole point of the command: SPEC §6's links for a row the ingest path never wrote,
+    which is what a database carried over from an earlier phase is full of."""
+    async with session_factory() as session, session.begin():
+        company_id = await insert_company(session, "Astranis", "astranis.com")
+
+    result = await sync_constructed_contacts(session_factory)
+
+    assert (result.companies, result.added, result.removed) == (1, 2, 0)
+    assert result.dry_run is False
+    async with session_factory() as session:
+        company_link, people_link = await stored_contacts(session)
+        assert company_link.company_id == company_id
+        assert (company_link.kind, company_link.value, company_link.confidence) == (
+            enums.ContactKind.LINKEDIN_COMPANY,
+            ASTRANIS_LINKEDIN,
+            enums.ContactConfidence.CONSTRUCTED,
+        )
+        assert search_keywords(people_link.value) == f'"Astranis" ({TITLE_TERMS})'
+        assert (company_link.source_id, people_link.source_id) == (None, None)
+
+
+async def test_a_second_sweep_changes_nothing(session_factory: SessionFactory) -> None:
+    """Idempotence is what makes the command safe to run whenever you are unsure, and the
+    counters are how it says so: ``added=0 removed=0`` on a database already in the right
+    state, not two rows silently rewritten."""
+    async with session_factory() as session, session.begin():
+        await insert_company(session, "Astranis", "astranis.com")
+    first = await sync_constructed_contacts(session_factory)
+    assert first.changed == 2
+
+    second = await sync_constructed_contacts(session_factory)
+
+    assert (second.companies, second.added, second.removed, second.changed) == (1, 0, 0, 0)
+    async with session_factory() as session:
+        assert len(await stored_contacts(session)) == 2
+
+
+def test_changed_counts_a_sweep_that_only_dropped_rows() -> None:
+    """A sweep can repair a company without writing a single row: a published company page
+    means no constructed one is built, so a leftover constructed link is dropped and nothing
+    replaces it — ``added=0 removed=1``.
+
+    ``cli.py`` reads ``changed`` for its ``(already in sync)`` suffix, and that is the one run
+    where the suffix would be a lie: the operator would be told nothing happened on the only
+    sweep that actually fixed something. Asserted as a unit rather than through the CLI because
+    the obvious end-to-end scenario — a renamed company — rebuilds as well as drops
+    (``added=1 removed=1``) and so cannot tell the two definitions apart.
+    """
+    assert ContactSyncResult(companies=1, added=0, removed=1, dry_run=False).changed == 1
+
+
+async def test_the_sweep_never_touches_a_published_contact(
+    session_factory: SessionFactory,
+) -> None:
+    """SPEC §6's "otherwise": a published company page means no constructed one is built, and
+    the published row itself — an observation (SPEC §2, §5) — is left exactly as it was, source
+    and all. The sweep also leaves the published address of a company it *does* build a link
+    for alone."""
+    async with session_factory() as session, session.begin():
+        company_id = await insert_company(session, "Sourcegraph", "sourcegraph.com")
+        source = Source(connector="company_site", url="https://sourcegraph.com/", fetched_at=NOW)
+        session.add(source)
+        await session.flush()
+        session.add_all(
+            [
+                Contact(
+                    company_id=company_id,
+                    kind=enums.ContactKind.LINKEDIN_COMPANY,
+                    value=SOURCEGRAPH_PUBLISHED_LINKEDIN,
+                    confidence=enums.ContactConfidence.PUBLISHED,
+                    source_id=source.id,
+                ),
+                Contact(
+                    company_id=company_id,
+                    kind=enums.ContactKind.EMAIL,
+                    value="jobs@sourcegraph.com",
+                    confidence=enums.ContactConfidence.PUBLISHED,
+                    source_id=source.id,
+                ),
+            ]
+        )
+        source_id = source.id
+
+    result = await sync_constructed_contacts(session_factory)
+
+    assert (result.added, result.removed) == (1, 0)  # the people search, and nothing else
+    async with session_factory() as session:
+        by_kind = {contact.kind: contact for contact in await stored_contacts(session)}
+        assert set(by_kind) == {
+            enums.ContactKind.LINKEDIN_COMPANY,
+            enums.ContactKind.EMAIL,
+            enums.ContactKind.LINKEDIN_PEOPLE,
+        }
+        published = by_kind[enums.ContactKind.LINKEDIN_COMPANY]
+        assert published.value == SOURCEGRAPH_PUBLISHED_LINKEDIN
+        assert (published.confidence, published.source_id) == (
+            enums.ContactConfidence.PUBLISHED,
+            source_id,
+        )
+        assert by_kind[enums.ContactKind.EMAIL].source_id == source_id
+        # No constructed company link was invented next to the published one.
+        assert SOURCEGRAPH_LINKEDIN not in {contact.value for contact in by_kind.values()}
+
+
+async def test_the_sweep_replaces_a_link_its_inputs_have_outgrown(
+    session_factory: SessionFactory,
+) -> None:
+    """A name or domain corrected outside the ingest path — a merge, a hand-edited row — leaves
+    a constructed link pointing at the wrong company. The sweep is what repairs it, and the
+    counters report both halves of the repair."""
+    async with session_factory() as session, session.begin():
+        company_id = await insert_company(session, "Astranis", "astranis.com")
+    await sync_constructed_contacts(session_factory)
+
+    async with session_factory() as session, session.begin():
+        company = await session.get(Company, company_id)
+        assert company is not None
+        company.name = "Astranis Space Technologies"
+        # A domain whose *registrable label* differs — `astranis.space` would not do, because
+        # the slug is the label before the suffix and stays `astranis`, which is the rule
+        # working rather than a link going stale.
+        company.domain = "astranisspace.com"
+
+    result = await sync_constructed_contacts(session_factory)
+
+    assert (result.added, result.removed) == (2, 2)
+    async with session_factory() as session:
+        values = {contact.value for contact in await stored_contacts(session)}
+        assert values == {
+            "https://www.linkedin.com/company/astranisspace",
+            people_search_url("Astranis Space Technologies"),
+        }
+
+
+async def test_a_company_with_no_domain_gets_only_the_people_search(
+    session_factory: SessionFactory,
+) -> None:
+    """SPEC §6 builds the company URL "from the domain"; there is none, and a slug guessed from
+    nothing links to a stranger. The name is still enough for the people search."""
+    async with session_factory() as session, session.begin():
+        await insert_company(session, "Aerdos Labs", None)
+
+    result = await sync_constructed_contacts(session_factory)
+
+    assert (result.added, result.removed) == (1, 0)
+    async with session_factory() as session:
+        (contact,) = await stored_contacts(session)
+        assert contact.kind is enums.ContactKind.LINKEDIN_PEOPLE
+
+
+async def test_a_dry_run_reports_what_it_would_do_and_writes_nothing(
+    session_factory: SessionFactory,
+) -> None:
+    """The safety valve on a command that touches every company. It is not an estimate: the
+    sweep runs in full and the transaction is discarded, so the counts are the counts — proved
+    here by running it for real afterwards and getting the same numbers."""
+    async with session_factory() as session, session.begin():
+        await insert_company(session, "Astranis", "astranis.com")
+        await insert_company(session, "Aerdos Labs", None)
+
+    dry = await sync_constructed_contacts(session_factory, dry_run=True)
+
+    assert (dry.companies, dry.added, dry.removed, dry.dry_run) == (2, 3, 0, True)
+    async with session_factory() as session:
+        assert await stored_contacts(session) == []
+
+    wet = await sync_constructed_contacts(session_factory)
+    assert (wet.companies, wet.added, wet.removed) == (2, 3, 0)
+    async with session_factory() as session:
+        assert len(await stored_contacts(session)) == 3
+
+
+async def test_every_company_is_reached_when_the_batch_is_smaller_than_the_database(
+    session_factory: SessionFactory,
+) -> None:
+    """The sweep pages by keyset over ``companies.id``. A batch that divides the table exactly,
+    and one that leaves a remainder, must both cover every row: an off-by-one in the cursor
+    would skip a company or loop for ever, and neither shows up at ``batch_size=500``.
+
+    Ids are deliberately non-contiguous (every second company is deleted) because ``Identity``
+    leaves gaps in a real database — a cursor advanced by ``+= batch_size`` rather than by the
+    last id seen would pass this test only on a table that was never written to twice.
+
+    The ``UPDATE`` below is load-bearing, not leftover setup: Postgres rewrites an updated row
+    at the end of the heap, so after an ordinary upsert of two companies the *physical* scan
+    order no longer matches id order. A page that dropped ``ORDER BY id`` would then hand back
+    heap order, advance the cursor past ids it never visited, and exclude them for ever — a
+    silent gap in exactly the completeness this command exists to guarantee, and one that
+    ``DELETE`` alone cannot provoke, because deleting a row does not move the survivors.
+
+    The session count is what makes ``batch_size`` mean anything. Every total here —
+    ``companies``, ``added``, the row count — is identical whether the sweep ran seven pages or
+    one, so without it a ``LIMIT`` that ignored the argument would pass unnoticed.
+    """
+    async with session_factory() as session, session.begin():
+        ids = [await insert_company(session, f"Company {index}", None) for index in range(14)]
+        for company_id in ids[1::2]:
+            company = await session.get(Company, company_id)
+            assert company is not None
+            await session.delete(company)
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text("UPDATE companies SET name = name || 'x' WHERE id IN (:first, :third)"),
+            {"first": ids[0], "third": ids[2]},
+        )
+    remaining = len(ids[0::2])
+
+    for batch_size in (1, 3, 7, remaining, remaining + 5):
+        async with session_factory() as session, session.begin():
+            await session.execute(delete(Contact))
+        opened = 0
+
+        def counting_factory() -> AsyncSession:
+            nonlocal opened
+            opened += 1
+            return session_factory()
+
+        result = await sync_constructed_contacts(
+            cast(SessionFactory, counting_factory), batch_size=batch_size
+        )
+
+        assert result.companies == remaining, batch_size
+        assert result.added == remaining, batch_size  # one people search each, no domains
+        # One session per full page, plus the empty one that ends the loop.
+        assert opened == -(-remaining // batch_size) + 1, batch_size
+        async with session_factory() as session:
+            assert len(await stored_contacts(session)) == remaining, batch_size
+
+
+async def test_a_batch_size_below_one_is_rejected(session_factory: SessionFactory) -> None:
+    """A zero or negative batch would page for ever over the same rows rather than fail."""
+    with pytest.raises(ValueError, match="batch_size must be at least 1"):
+        await sync_constructed_contacts(session_factory, batch_size=0)
+
+
+async def test_the_sweep_writes_no_fetch_run(session_factory: SessionFactory) -> None:
+    """SPEC §7.2's "every run writes a FetchRun row" is about *fetching*. Nothing here fetches,
+    so a row would claim a source was contacted that never was, and ``/runs`` would show a
+    connector that does not exist."""
+    async with session_factory() as session, session.begin():
+        await insert_company(session, "Astranis", "astranis.com")
+
+    await sync_constructed_contacts(session_factory)
+
+    assert await counts(session_factory, FetchRun) == {"fetch_runs": 0}
+
+
+async def test_the_sweep_commits_one_company_at_a_time(
+    session_factory: SessionFactory,
+) -> None:
+    """``batch_size`` sizes the id *page*, not the transaction.
+
+    Each company is reconciled under a row lock (see the concurrency test below), and a lock is
+    held until its transaction ends. Committing a whole page at once would hold up to 500 of
+    them while an ingest run waited, and could deadlock against the end-of-run ``UPDATE
+    companies``, which takes its own row locks in heap order rather than id order. So the
+    commit is per company, and the count of commits is the only place that is visible: every
+    total the sweep reports is identical either way.
+    """
+    async with session_factory() as session, session.begin():
+        for index in range(3):
+            await insert_company(session, f"Company {index}", None)
+    commits = 0
+
+    def counting_factory() -> AsyncSession:
+        session = session_factory()
+
+        def count_commit(_: object) -> None:
+            nonlocal commits
+            commits += 1
+
+        event.listen(session.sync_session, "after_commit", count_commit)
+        return session
+
+    result = await sync_constructed_contacts(cast(SessionFactory, counting_factory))
+
+    assert (result.companies, result.added) == (3, 3)
+    assert commits == 3
+
+
+async def wait_until_a_backend_is_blocked(session: AsyncSession) -> None:
+    """Return once some *other* backend on this database is waiting for a lock.
+
+    A ``sleep`` would make the interleave below a race with a stopwatch; this makes it an
+    observation. Postgres reports both kinds of wait this test can produce — a row lock, and an
+    ``ON CONFLICT`` insert waiting on the transaction that deleted the conflicting row — as
+    ``wait_event_type = 'Lock'``, so the barrier is the same whether or not the fix is in place.
+
+    ``pg_stat_clear_snapshot`` on every pass because backend status is cached for the duration
+    of the reading transaction, and this one has to stay open: it is the transaction holding
+    the lock being waited for.
+    """
+    waiting = text(
+        "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+        "AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'"
+    )
+    try:
+        async with asyncio.timeout(15.0):
+            while not await session.scalar(waiting):
+                await asyncio.sleep(0.01)
+                await session.execute(text("SELECT pg_stat_clear_snapshot()"))
+    except TimeoutError:
+        msg = "no other backend ever blocked; the interleave did not happen"
+        raise AssertionError(msg) from None
+
+
+async def test_a_sweep_cannot_delete_the_links_a_concurrent_upsert_just_committed(
+    session_factory: SessionFactory,
+) -> None:
+    """The sweep reconciles companies no upsert is touching — but nothing stops a connector
+    from upserting one mid-sweep, and the two write the same rows.
+
+    The dangerous order is: the sweep reads ``(name, domain)``; a scheduled run renames the
+    company, rebuilds its people-search link and commits; the sweep then writes from the name
+    it read a moment ago. That is not merely a stale insert. ``_drop_superseded_constructed``
+    deletes every constructed row whose value differs from the sweep's ``keep``, which is
+    precisely the row the upsert just committed — so the company ends up advertising a search
+    for a name it no longer has, until some connector next re-lists it. The sweep reports
+    ``added=1 removed=1`` and exits 0, so nothing says anything went wrong.
+
+    The fix is that the read takes the row lock the writes need, so the two serialize. Here the
+    upsert holds that lock, waits for the sweep to block on it, and only then commits; the
+    sweep must therefore work from the name it finds afterwards, and find nothing left to do.
+    """
+    async with session_factory() as session, session.begin():
+        company_id = await insert_company(session, "Old Co", "oldco.com")
+    await sync_constructed_contacts(session_factory)
+    holding_the_row = asyncio.Event()
+
+    async def rename_the_company() -> None:
+        async with session_factory() as session, session.begin():
+            await upsert_company_record(
+                session,
+                make_record(name="New Co", domain="oldco.com", external_id="new-co"),
+                "sec_edgar",
+                now=NOW,
+            )
+            holding_the_row.set()
+            await wait_until_a_backend_is_blocked(session)
+
+    async def sweep() -> ContactSyncResult:
+        await holding_the_row.wait()
+        return await sync_constructed_contacts(session_factory)
+
+    _, result = await asyncio.gather(rename_the_company(), sweep())
+
+    async with session_factory() as session:
+        company = await session.get(Company, company_id, populate_existing=True)
+        assert company is not None and company.name == "New Co"
+        (people,) = await stored_contacts(session, enums.ContactKind.LINKEDIN_PEOPLE)
+        assert people.value == people_search_url("New Co"), "the sweep overwrote a fresh link"
+    # Nothing was left for the sweep to do: the upsert had already rebuilt both links.
+    assert (result.added, result.removed) == (0, 0)

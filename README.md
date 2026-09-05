@@ -85,6 +85,25 @@ wins.
 `seed` is deliberately absent from `refresh --all`: it is a bootstrap, and re-validating 58
 domains every night buys nothing. Run `make seed` when the list changes.
 
+### Upgrading a database that predates the contacts phase
+
+The LinkedIn company link and the "Find people →" search link (SPEC §6) are built whenever a
+company is upserted, so a database populated from scratch already has them everywhere — except
+that the company link is built from the domain, so a company without one (an EDGAR-only row)
+gets the people search alone. A database carried over from an earlier phase does not have even
+that: a company no connector re-lists — a Form D outside the incremental window, a seeded row, a
+company with neither a website nor a domain for `company_site` to visit — would never gain them.
+One sweep fixes that:
+
+```sh
+python cli.py sync-contacts --dry-run   # says exactly what it would change
+python cli.py sync-contacts             # ~5 seconds for 3,000 companies
+```
+
+It reads and writes only the local database — nothing is fetched, so no `fetch_runs` row is
+written — and it touches only `constructed` contacts, never a published address. Running it twice
+is running it once: the second run reports `added=0  removed=0`.
+
 ## Web interface
 
 Four pages, server-rendered Jinja2 with HTMX for the interactive parts, on
