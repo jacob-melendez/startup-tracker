@@ -1,0 +1,34 @@
+{#-
+  One page of company rows plus the keyset "Load more" control (SPEC §9: "pagination, 50 per
+  page, keyset-based on the sort column").
+
+  This partial is returned three ways and must be identical in all three:
+    * inlined into `#results` on the first render of `companies.html`;
+    * as the htmx response to a filter/sort submit, swapped into `#results` (innerHTML);
+    * as the htmx response to the "Load more" button, which targets *itself* with
+      `outerHTML` — so the button is replaced by the next 50 rows followed by the next
+      button. That self-replacement is the whole reason the same partial serves both cases.
+
+  `next_url` already carries the cursor; there is no `hx-push-url` on the button, because the
+  address bar should keep pointing at page 1 of this filter set rather than at a token that
+  only makes sense mid-scroll.
+-#}
+{%- if page.rows %}
+  {%- for row in page.rows %}
+    {%- set extra = extras[row.id] %}
+    {%- include "_company_row.html" %}
+  {%- endfor %}
+  {%- if next_url %}
+  <button class="load-more" type="button"
+          hx-get="{{ next_url }}" hx-target="this" hx-swap="outerHTML">Load 50 more</button>
+  {%- endif %}
+{%- else %}
+  {#- Two different empty states: nothing matched, versus nothing ingested yet. `is_empty`
+      is true only when no filter at all is set, so it is exactly the "brand-new database"
+      signal — telling a user to clear filters they never set would be noise. -#}
+  {%- if filters.is_empty %}
+  <p class="empty">No companies yet — run <code>make seed</code>, then <code>make refresh</code>.</p>
+  {%- else %}
+  <p class="empty">No companies match these filters. <a href="/">Clear filters</a></p>
+  {%- endif %}
+{%- endif %}

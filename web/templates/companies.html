@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{#-
+  `/` — the company list, SPEC §9's primary view.
+
+  The page is the chrome plus two pieces: the filter form and `#results`. Everything below
+  `#results` is `_company_results.html`, which is *also* what the server returns for an htmx
+  filter submit and for "Load more" — one partial, three entry points, so the first paint and
+  every subsequent swap are byte-for-byte the same markup.
+-#}
+{#- The tab title is composed in base.html from `page_title` ("Companies"), which this route
+    already passes; the same value is the page's one <h1>, so the heading a screen reader
+    jumps to and the name in the tab cannot disagree. -#}
+{% block content %}
+  {%- set form_action = "/" %}
+  <h1>{{ page_title }}</h1>
+  {% include "_filters.html" %}
+
+  {#- Deliberately NOT a live region. This container is the ancestor of every lazily loaded
+      `.panel` and of the "Load more" button, so `aria-live` here queues the whole of an
+      expanded company — hundreds of role rows — for announcement on a single click. The
+      swap that genuinely deserves a spoken cue is the filter submit, and `#spinner` in the
+      filter row (role="status", outside this container) already speaks for it. -#}
+  <div id="results" class="companies">
+    {%- include "_company_results.html" %}
+  </div>
+{% endblock %}

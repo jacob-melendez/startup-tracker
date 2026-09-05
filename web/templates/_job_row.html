@@ -1,0 +1,23 @@
+{%- import "_chips.html" as chips -%}
+{#-
+  One `/roles` row (SPEC §9): star toggle, title, company, family, employment type,
+  seniority, location with a Remote badge, the flexible badge, and the posted date.
+
+  A closed role is only ever reachable with `closed=1` and is marked `.badge.closed` so it
+  can never be mistaken for something still open — rows are closed, never deleted (§2, §5).
+
+  The title link goes through `safe_url`; the URL was scraped from a third-party board, and a
+  role with an unusable URL still has to render, so the macro degrades to plain text.
+-#}
+<tr>
+  <td>{% with job_id = job.id, starred = job.starred %}{% include "_bookmark.html" %}{% endwith %}</td>
+  <td>{{ chips.external_link(job.url, job.title) }}
+    {% if job.compensation_raw %}<span class="muted">{{ job.compensation_raw }}</span>{% endif %}</td>
+  <td><a href="/company/{{ job.company_id }}">{{ job.company_name }}</a></td>
+  <td>{{ job.role_family | label }}</td>
+  <td>{{ job.employment_type | label }}</td>
+  <td>{{ job.seniority | label }}</td>
+  <td>{{ job.location_text or '—' }}</td>
+  <td><span title="{{ job.posted_at | day }}">{{ job.posted_at | ago }}</span></td>
+  <td>{{ chips.job_badges(job) }}</td>
+</tr>

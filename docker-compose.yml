@@ -20,10 +20,13 @@ services:
       retries: 12
       start_period: 10s
 
-  # Application image: used for one-off commands now (`make migrate`, later `make seed`/`refresh`)
-  # and for the web server once web/app.py exists (Phase 4 adds its `command`).
+  # Application image: serves the SPEC §9 web app, and is also the image `docker compose run`
+  # uses for one-off commands (`make migrate`, `make seed`, `make refresh`), which override the
+  # `command` below. The app only ever reads the local database — no handler makes an outbound
+  # call (SPEC §2) — so it is healthy before `make migrate` has created a single table.
   app:
     build: .
+    command: ["uvicorn", "web.app:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file:
       - path: .env
         required: false
@@ -38,6 +41,19 @@ services:
       # Live-reload the source tree; the virtualenv lives in /opt/venv (see Dockerfile) so the
       # host's .venv never shadows it.
       - .:/app
+    healthcheck:
+      # python:3.12-slim ships no curl or wget, so probe with the stdlib. `/healthz` deliberately
+      # touches nothing but the process itself, so this reports the server, not the database.
+      # urlopen raises on a non-2xx status, which is the non-zero exit Compose looks for.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=3)
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   pgdata:

@@ -1,0 +1,324 @@
+{%- import "_chips.html" as chips -%}
+{#-
+  The expanded company row (SPEC §9), in the order the spec lists it:
+    1. thesis / description
+    2. all locations
+    3. funding history (round, amount, date, investors)
+    4. the full open-roles table
+    5. contacts, published vs constructed
+    6. provenance line
+    7. the inline note + status + rating control
+
+  Two entry points, one template: htmx swaps it into `<div class="panel">` inside a row, and
+  `/company/{id}` renders it inline with `standalone=True`, which adds the page heading the
+  collapsed row's `<summary>` would otherwise have supplied.
+
+  It reads only relationships the route eager-loads (`funding_rounds -> investor_links ->
+  investor`, `location_links -> location`, `sector_links -> sector`, `contacts`, `people`,
+  `source_links`) plus the `jobs` and `note` context keys. Touching an unloaded relationship
+  would emit lazy IO from inside a template on an async session — always a bug, and under
+  asyncio an immediate `MissingGreenlet`. Funding rounds arrive newest-first from the route.
+
+  `jobs` is every open role of the company, unfiltered, straight from `db.queries.company_jobs`.
+  `highlight` marks the ones the page-level role filter selected; it must never remove a row
+  (§9 "showing all roles regardless of the page-level role filter, with matching ones
+  highlighted", §7.1 "classification never excludes").
+
+  `controls` is the other half of that §9 sentence — "sortable and filterable within the row" —
+  and is the one thing here that may shorten the table. It starts off: the collapsed row's
+  `hx-get` sends no `role_*` parameter, so the first render of any panel is still every role.
+  `role_sort_qs` holds one ready-made query string per sortable column and `roles_reset_qs` the
+  way back to the unnarrowed table; both are built in `web.filters` so the six headers and the
+  filter form cannot disagree about what to carry forward.
+-#}
+{%- if standalone %}
+<header class="panel-section">
+  <h1>{{ company.name }}</h1>
+  <p class="summary-meta">
+    {%- if company.website_url %}
+    {{ chips.external_link(company.website_url, company.domain or company.website_url) }}
+    {%- endif %}
+    {%- if company.stage and company.stage != 'unknown' %}
+    <span class="muted">{{ company.stage | label }}</span>
+    {%- endif %}
+    {%- if company.status and company.status != 'active' %}
+    <span class="muted">{{ company.status | label }}</span>
+    {%- endif %}
+    <span class="count">{{ company.open_job_count }} open</span>
+    {%- for link in company.sector_links %}
+    <span class="chip sector">{{ link.sector.name }}</span>
+    {%- endfor %}
+  </p>
+  <p><a href="/">&larr; All companies</a></p>
+</header>
+{%- endif %}
+
+{#- 1. Thesis / description --------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>About</h2>
+  {%- if company.one_liner %}
+  <p>{{ company.one_liner }}</p>
+  {%- endif %}
+  {%- if company.thesis %}
+  <p>{{ company.thesis }}</p>
+  {%- endif %}
+  {%- if not company.one_liner and not company.thesis %}
+  <p class="muted">No description on file.</p>
+  {%- endif %}
+  <p class="summary-meta">
+    {% if company.founded_year %}<span class="muted">Founded {{ company.founded_year }}</span>{% endif %}
+    {% if company.employee_est %}<span class="muted">~{{ company.employee_est }} people</span>{% endif %}
+    <span class="muted">First seen {{ company.first_seen_at | ago }}</span>
+  </p>
+</section>
+
+{#- 2. All locations ---------------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>Locations</h2>
+  {%- if company.location_links %}
+  <p class="summary-meta">
+    {#- HQ first, then alphabetical: two stable sorts, cheapest way to express that here. -#}
+    {%- for link in company.location_links | sort(attribute='location.city') | sort(attribute='is_hq', reverse=true) %}
+    <span class="chip">{{ link.location.city }}, {{ link.location.state }}{% if link.is_hq %} · HQ{% endif %}</span>
+    {%- endfor %}
+  </p>
+  {%- else %}
+  <p class="muted">No locations on file.</p>
+  {%- endif %}
+</section>
+
+{#- 3. Funding history -------------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>Funding</h2>
+  {%- if company.funding_rounds %}
+  <div class="table-wrap">
+    <table class="funding">
+      <caption class="sr-only">Funding rounds, newest first</caption>
+      <thead>
+        <tr><th scope="col">Round</th><th scope="col">Amount</th><th scope="col">Announced</th>
+          <th scope="col">Investors</th></tr>
+      </thead>
+      <tbody>
+        {%- for round in company.funding_rounds %}
+        <tr>
+          <td>{{ round.round_type | label }}</td>
+          {#- A NULL amount is "undisclosed", not zero (§5); `money` renders it as an em dash. -#}
+          <td>{{ round.amount_usd | money }}</td>
+          <td>{{ round.announced_date | day }}</td>
+          <td>
+            {%- if round.investor_links -%}
+              {%- for link in round.investor_links | sort(attribute='is_lead', reverse=true) -%}
+                {%- if not loop.first %}, {% endif -%}
+                {{ link.investor.name }}{% if link.is_lead %} <span class="muted">(lead)</span>{% endif %}
+              {%- endfor -%}
+            {%- else -%}
+              <span class="muted">&mdash;</span>
+            {%- endif -%}
+          </td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="muted">No funding rounds on file.</p>
+  {%- endif %}
+</section>
+
+{#- 4. The full open-roles table ---------------------------------------------------------- #}
+{#- One sortable column header (§9 "sortable ... within the row"). It is an ordinary link to
+    the permalink first — with JavaScript off, following it loads `/company/{id}` showing this
+    same table in the requested order — and an htmx swap of this panel second: the same two
+    steps, in the same order, as `_filters.html`. On the permalink there is no other panel to
+    swap into, and the fragment would drop the page heading around it, so `standalone` leaves
+    the hx-* attributes off and the plain link does the work.
+
+    `aria-sort` states the column's CURRENT direction while the link requests the other one;
+    the arrow and the href disagree on the active column, and have to. -#}
+{%- macro sort_header(column, caption) -%}
+{%- set active = controls.sort == column -%}
+<th scope="col" aria-sort="{{ ('descending' if controls.descending else 'ascending') if active else 'none' }}">
+  <a href="/company/{{ company.id }}{{ role_sort_qs[column] }}"
+     {%- if not standalone %} hx-get="/company/{{ company.id }}/panel{{ role_sort_qs[column] }}"
+     hx-target="closest .panel" hx-swap="innerHTML"{% endif %}>{{ caption }}
+    {%- if active %} <span aria-hidden="true">{{ '↓' if controls.descending else '↑' }}</span>
+    <span class="sr-only">(sorted {{ 'descending' if controls.descending else 'ascending' }})</span>
+    {%- endif %}</a>
+</th>
+{%- endmacro -%}
+<section class="panel-section">
+  <h2>{{ 'Roles' if controls.include_closed else 'Open roles' }}
+    <span class="count">{{ jobs | length }}</span></h2>
+  {%- if controls.is_filtered %}
+  {#- Said out loud because the count above is no longer the open-role count the collapsed row
+      promised, and because a filter with no way back is a trap (§7.1). -#}
+  <p class="muted">
+    {%- if controls.title_q %}Narrowed to titles containing &ldquo;{{ controls.title_q }}&rdquo;.
+    {%- endif %}
+    {%- if controls.include_closed %} Closed roles are listed too.{% endif %}
+    <a href="/company/{{ company.id }}{{ roles_reset_qs }}"
+       {%- if not standalone %} hx-get="/company/{{ company.id }}/panel{{ roles_reset_qs }}"
+       hx-target="closest .panel" hx-swap="innerHTML"{% endif %}>Show every open role</a></p>
+  {%- elif highlight and highlight.has_job_filters %}
+  <p class="muted">Every open role is listed; the ones matching the current role filter are
+    marked.</p>
+  {%- endif %}
+
+  {%- if jobs or controls.is_filtered %}
+  {#- The row's own filter: a real GET form to the permalink so it works with JavaScript off,
+      upgraded to a swap of this panel when htmx is present. The hidden fields carry the
+      page's highlight and the column being sorted, so narrowing the table changes neither.
+      Every id is suffixed with the company id — fifty expanded rows share one document. -#}
+  <form class="roles-filter"
+        method="get"
+        action="/company/{{ company.id }}"
+        {%- if not standalone %}
+        hx-get="/company/{{ company.id }}/panel"
+        hx-target="closest .panel"
+        hx-swap="innerHTML"
+        hx-trigger="change, search, submit, keyup changed delay:400ms from:#role-q-{{ company.id }}"
+        {%- endif %}>
+    {%- if highlight %}
+    {%- for family in highlight.role_families %}
+    <input type="hidden" name="family" value="{{ family }}">
+    {%- endfor %}
+    {%- for employment in highlight.employment_types %}
+    <input type="hidden" name="employment" value="{{ employment }}">
+    {%- endfor %}
+    {%- for seniority in highlight.seniorities %}
+    <input type="hidden" name="seniority" value="{{ seniority }}">
+    {%- endfor %}
+    {%- if highlight.flexible_only %}
+    <input type="hidden" name="flexible" value="1">
+    {%- endif %}
+    {%- endif %}
+    <input type="hidden" name="role_sort" value="{{ controls.sort }}">
+    <input type="hidden" name="role_dir" value="{{ 'desc' if controls.descending else 'asc' }}">
+    <div class="field">
+      <label for="role-q-{{ company.id }}">Filter these roles</label>
+      <input id="role-q-{{ company.id }}" type="search" name="role_q"
+             value="{{ controls.title_q or '' }}" placeholder="title contains&hellip;">
+    </div>
+    <div class="field">
+      <label for="role-closed-{{ company.id }}">
+        {#- Opt-in, like the `closed` box on /roles: a closed role is history, not a listing. -#}
+        <input id="role-closed-{{ company.id }}" type="checkbox" name="role_closed" value="1"
+               {% if controls.include_closed %}checked{% endif %}>
+        Include closed roles
+      </label>
+    </div>
+    <div class="actions">
+      <button type="submit">Filter roles</button>
+    </div>
+  </form>
+  {%- endif %}
+
+  {%- if jobs %}
+  <div class="table-wrap">
+    <table class="roles">
+      {#- The caption states what the table currently *is*, not what it usually is: with the
+          in-row controls on, "all open roles" would be the one thing it is not. -#}
+      <caption class="sr-only">{{ 'Roles' if controls.include_closed else 'All open roles' }} at
+        {{ company.name }}
+        {%- if controls.title_q %} with &ldquo;{{ controls.title_q }}&rdquo; in the title{% endif %},
+        sorted by {{ controls.sort }}
+        {{- ' descending' if controls.descending else ' ascending' }}</caption>
+      <thead>
+        <tr>
+          <th scope="col"><span class="sr-only">Bookmark</span></th>
+          {{ sort_header('title', 'Title') }}{{ sort_header('family', 'Family') }}
+          {{- sort_header('type', 'Type') }}{{ sort_header('seniority', 'Seniority') }}
+          {{- sort_header('location', 'Location') }}{{ sort_header('posted', 'Posted') }}
+          <th scope="col"><span class="sr-only">Badges</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {%- for job in jobs %}
+        {#- One role matches only when it satisfies *every* active role filter at once — the
+            same conjunction the company list's single EXISTS uses, so the row a filter
+            promised is the row that lights up here. -#}
+        {%- set matched = highlight and highlight.has_job_filters
+              and (not highlight.role_families or job.role_family in highlight.role_families)
+              and (not highlight.employment_types or job.employment_type in highlight.employment_types)
+              and (not highlight.seniorities or job.seniority in highlight.seniorities)
+              and (not highlight.flexible_only or job.flexible_signal) %}
+        <tr{% if matched %} class="match"{% endif %}>
+          <td>{% with job_id = job.id, starred = job.starred %}{% include "_bookmark.html" %}{% endwith %}</td>
+          <td>{{ chips.external_link(job.url, job.title) }}</td>
+          <td>{{ job.role_family | label }}</td>
+          <td>{{ job.employment_type | label }}</td>
+          <td>{{ job.seniority | label }}</td>
+          <td>{{ job.location_text or '—' }}</td>
+          <td><span title="{{ job.posted_at | day }}">{{ job.posted_at | ago }}</span></td>
+          {#- `.match` is a colour change, so the same fact is spelled out for a screen reader. -#}
+          <td>{% if matched %}<span class="sr-only">Matches the current role filter</span>{% endif %}
+            {{- chips.job_badges(job) }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- elif controls.is_filtered %}
+  <p class="muted">No role here matches that filter.</p>
+  {%- else %}
+  <p class="muted">No open roles right now.</p>
+  {%- endif %}
+</section>
+
+{#- 5. Contacts ---------------------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>Contacts</h2>
+  {%- if company.contacts %}
+  <ul>
+    {%- for contact in company.contacts %}
+    <li>
+      <span class="muted">{{ contact.kind | label }}</span>
+      {% if contact.kind == 'email' %}
+      {#- Not a URL, so `safe_url` does not apply; the scheme is hard-coded here and the
+          value is autoescaped, so nothing user-sourced can change the scheme. -#}
+      <a href="mailto:{{ contact.value }}">{{ contact.value }}</a>
+      {%- else %}
+      {{ chips.external_link(contact.value, contact.value) }}
+      {%- endif %}
+      {{ chips.confidence_badge(contact.confidence) }}
+    </li>
+    {%- endfor %}
+  </ul>
+  <p class="muted">SPEC §6: <strong>published</strong> means the company itself published it;
+    <strong>constructed</strong> is a deterministic search shortcut we built — never a verified
+    address, and no profile is ever fetched.</p>
+  {%- else %}
+  <p class="muted">No contacts on file yet.</p>
+  {%- endif %}
+  {%- if company.people %}
+  <ul>
+    {%- for person in company.people %}
+    <li>
+      {{ person.full_name }}
+      {%- if person.title %} <span class="muted">{{ person.title }}</span>{% endif %}
+      {%- if person.role_type %} <span class="muted">{{ person.role_type | label }}</span>{% endif %}
+      {%- if person.linkedin_url %} {{ chips.external_link(person.linkedin_url, 'LinkedIn') }}{% endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+
+{#- 6. Provenance -------------------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>Provenance</h2>
+  {%- if company.source_links %}
+  <p class="muted">Seen by
+    {%- for link in company.source_links | sort(attribute='last_seen_at', reverse=true) %}
+    {% if not loop.first %}· {% endif %}{{ link.connector }} {{ link.last_seen_at | ago }}
+    {%- endfor %}</p>
+  {%- else %}
+  <p class="muted">No connector has claimed this company yet.</p>
+  {%- endif %}
+</section>
+
+{#- 7. Note / status / rating -------------------------------------------------------------- #}
+<section class="panel-section">
+  <h2>Your notes</h2>
+  {% with company_id = company.id, saved = false %}{% include "_note_form.html" %}{% endwith %}
+</section>

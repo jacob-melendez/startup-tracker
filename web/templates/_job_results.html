@@ -1,0 +1,35 @@
+{#-
+  One page of `/roles` rows plus the keyset "Load more" control — the job-list twin of
+  `_company_results.html`, and returned by the server for the same three cases: the first
+  render, a filter/sort swap into `#results`, and the "Load more" button replacing itself
+  with the next 50 rows followed by the next button.
+
+  The one difference from the company list: these rows are `<tr>`s, so the button has to sit
+  in a row of its own and target `closest tr` instead of `this`. Swapping the `<button>`
+  itself would splice `<tr>` elements inside a `<td>`, which the DOM accepts and the table
+  layout then renders as an orphaned anonymous table. The self-replacing behaviour is
+  identical; only the element being replaced moves out one level.
+-#}
+{%- if page.rows %}
+  {%- for job in page.rows %}
+    {%- include "_job_row.html" %}
+  {%- endfor %}
+  {%- if next_url %}
+  <tr>
+    <td colspan="9">
+      <button class="load-more" type="button"
+              hx-get="{{ next_url }}" hx-target="closest tr" hx-swap="outerHTML">Load 50 more</button>
+    </td>
+  </tr>
+  {%- endif %}
+{%- else %}
+  <tr>
+    <td colspan="9">
+      {%- if filters.is_empty %}
+      <p class="empty">No roles yet — run <code>make seed</code>, then <code>make refresh</code>.</p>
+      {%- else %}
+      <p class="empty">No roles match these filters. <a href="/roles">Clear filters</a></p>
+      {%- endif %}
+    </td>
+  </tr>
+{%- endif %}

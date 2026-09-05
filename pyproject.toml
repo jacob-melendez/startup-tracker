@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "Locally-run tracker of Bay Area startups and their open roles (see docs/SPEC.md)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-# Phases 1-3 runtime dependencies (SPEC §3). Later phases add FastAPI/Jinja2/uvicorn (web)
-# and APScheduler (scheduler).
+# Runtime dependencies (SPEC §3). The five web ones (fastapi, jinja2, uvicorn,
+# python-multipart for the note/bookmark form posts, apscheduler as the cron parser behind the
+# /runs staleness check) landed with Phase 4; the scheduler service itself arrives in Phase 6.
 dependencies = [
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
@@ -18,6 +19,11 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.15",
     "selectolax>=0.4.11",
+    "fastapi>=0.115",
+    "jinja2>=3.1",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.20",
+    "apscheduler>=3.11,<4",
 ]
 
 [dependency-groups]
@@ -68,7 +74,16 @@ strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
 # SPEC §3: `mypy --strict` on ingest/ and db/; the rest of the tree is held to the same bar.
-files = ["db", "ingest", "cli.py", "migrations/env.py", "settings.py", "logging_config.py", "tests"]
+files = [
+    "db",
+    "ingest",
+    "web",
+    "cli.py",
+    "migrations/env.py",
+    "settings.py",
+    "logging_config.py",
+    "tests",
+]
 
 [[tool.mypy.overrides]]
 module = ["testcontainers.*"]

@@ -1,0 +1,192 @@
+{#-
+  The §9 filter row, shared verbatim by `/` and `/roles` ("same filter set").
+
+  It is a real `<form method="get">` first and an htmx form second: with JavaScript off the
+  submit button performs an ordinary GET to `form_action` and the server renders the full
+  page. The hx-* attributes only upgrade that into a fragment swap of `#results`, with
+  `hx-push-url` keeping the address bar (and therefore the back button and bookmarks) in step
+  with what is on screen.
+
+  There is deliberately no `cursor` field: changing a filter always restarts at page 1, and a
+  keyset cursor minted under a different filter set would silently return the wrong page.
+
+  Every `name=` here is part of the pinned query-parameter contract (brief §4.4); an unset
+  control submits nothing, which is what makes "no filters" a plain unfiltered list — the
+  mechanical form of §7.1's rule that classification never excludes.
+
+  `form_action` is set by the including page (`/` or `/roles`); `is_roles` switches the two
+  places the two views genuinely differ — the sort vocabulary and the closed-roles toggle.
+-#}
+{%- set is_roles = form_action == "/roles" -%}
+<form class="filters"
+      role="search"
+      method="get"
+      action="{{ form_action }}"
+      hx-get="{{ form_action }}"
+      hx-target="#results"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+      hx-indicator="#spinner"
+      hx-trigger="change, search, submit, keyup changed delay:400ms from:#q">
+
+  <div class="field">
+    <label for="q">Search</label>
+    {#- `type="search"` gives the native clear button, which fires the `search` event the
+        hx-trigger above listens for. -#}
+    <input id="q" type="search" name="q" value="{{ filters.q or '' }}"
+           placeholder="name, thesis{% if is_roles %}, role title{% endif %}">
+  </div>
+
+  <div class="field">
+    <label for="f-city">City</label>
+    <select id="f-city" name="city" multiple size="4">
+      {%- for city in facets.cities %}
+      <option value="{{ city }}"{% if city in filters.cities %} selected{% endif %}>{{ city }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  {#- Sectors are by far the largest facet — hundreds of options against 6-19 for every other
+      select — so this one gets a taller window and (via `.field.wide`) a wider box, which is
+      what keeps the longest names from being clipped. Native listbox type-ahead is the fast
+      way through a list that long, so the label says so; there is no JavaScript here. -#}
+  <div class="field wide">
+    <label for="f-sector">Sector <span class="muted">(type to jump)</span></label>
+    <select id="f-sector" name="sector" multiple size="8">
+      {#- The slug is the wire value, the name is what the user reads. -#}
+      {%- for slug, name in facets.sectors %}
+      <option value="{{ slug }}"{% if slug in filters.sector_slugs %} selected{% endif %}>{{ name }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-stage">Stage</label>
+    <select id="f-stage" name="stage" multiple size="4">
+      {%- for stage in STAGE_ORDER %}
+      <option value="{{ stage }}"{% if stage in filters.stages %} selected{% endif %}>{{ stage | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-round">Last round</label>
+    <select id="f-round" name="round" multiple size="4">
+      {%- for round_type in ROUND_TYPE_ORDER %}
+      <option value="{{ round_type }}"{% if round_type in filters.round_types %} selected{% endif %}>{{ round_type | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-amount-min">Round amount min ($)</label>
+    <input id="f-amount-min" type="number" name="amount_min" min="0" step="1000000"
+           inputmode="numeric" placeholder="e.g. 5000000"
+           value="{% if filters.amount_min_usd is not none %}{{ filters.amount_min_usd }}{% endif %}">
+  </div>
+
+  <div class="field">
+    <label for="f-amount-max">Round amount max ($)</label>
+    <input id="f-amount-max" type="number" name="amount_max" min="0" step="1000000"
+           inputmode="numeric" placeholder="e.g. 50000000"
+           value="{% if filters.amount_max_usd is not none %}{{ filters.amount_max_usd }}{% endif %}">
+  </div>
+
+  <div class="field">
+    <label for="f-round-months">Raised within (months)</label>
+    <input id="f-round-months" type="number" name="round_months" min="1" max="120"
+           inputmode="numeric" placeholder="e.g. 12"
+           value="{% if filters.round_within_months is not none %}{{ filters.round_within_months }}{% endif %}">
+  </div>
+
+  <div class="field">
+    <label for="f-family">Role family</label>
+    {#- All 19 families (§7.1); `other` is one of them and is never special-cased away. -#}
+    <select id="f-family" name="family" multiple size="6">
+      {%- for family in ROLE_FAMILY_ORDER %}
+      <option value="{{ family }}"{% if family in filters.role_families %} selected{% endif %}>{{ family | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-employment">Employment type</label>
+    <select id="f-employment" name="employment" multiple size="4">
+      {%- for employment in EMPLOYMENT_TYPE_ORDER %}
+      <option value="{{ employment }}"{% if employment in filters.employment_types %} selected{% endif %}>{{ employment | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-seniority">Seniority</label>
+    <select id="f-seniority" name="seniority" multiple size="4">
+      {%- for seniority in SENIORITY_ORDER %}
+      <option value="{{ seniority }}"{% if seniority in filters.seniorities %} selected{% endif %}>{{ seniority | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-tracking">Tracking</label>
+    <select id="f-tracking" name="tracking" multiple size="4">
+      {%- for status in TRACKING_STATUS_ORDER %}
+      <option value="{{ status }}"{% if status in filters.tracking_statuses %} selected{% endif %}>{{ status | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="f-flexible">
+      {#- §7.1: an opt-in filter, off by default, that never hides anything when off. -#}
+      <input id="f-flexible" type="checkbox" name="flexible" value="1"
+             {% if filters.flexible_only %}checked{% endif %}>
+      Flexible / student-friendly only
+    </label>
+  </div>
+
+  <div class="field">
+    <label for="f-open-roles">
+      <input id="f-open-roles" type="checkbox" name="open_roles" value="1"
+             {% if filters.has_open_roles %}checked{% endif %}>
+      Has open roles
+    </label>
+  </div>
+
+  {%- if is_roles %}
+  <div class="field">
+    <label for="f-closed">
+      {#- A closed role is history, not a listing (§2: rows are never deleted, only closed). -#}
+      <input id="f-closed" type="checkbox" name="closed" value="1"
+             {% if filters.include_closed_jobs %}checked{% endif %}>
+      Include closed roles
+    </label>
+  </div>
+  {%- endif %}
+
+  <div class="field">
+    <label for="f-sort">Sort</label>
+    {#- Sort lives inside the filter form so that changing it re-submits every active filter,
+        works with JavaScript off, and needs no second URL-building code path. -#}
+    <select id="f-sort" name="sort">
+      {%- if is_roles %}
+      <option value="posted"{% if sort == 'posted' %} selected{% endif %}>Recently posted</option>
+      <option value="first_seen"{% if sort == 'first_seen' %} selected{% endif %}>Recently added</option>
+      <option value="company"{% if sort == 'company' %} selected{% endif %}>Company name</option>
+      {%- else %}
+      <option value="recent_job"{% if sort == 'recent_job' %} selected{% endif %}>Recent job posting</option>
+      <option value="funding_date"{% if sort == 'funding_date' %} selected{% endif %}>Last funding date</option>
+      <option value="amount"{% if sort == 'amount' %} selected{% endif %}>Amount raised</option>
+      <option value="newest"{% if sort == 'newest' %} selected{% endif %}>Recently added</option>
+      <option value="open_roles"{% if sort == 'open_roles' %} selected{% endif %}>Open role count</option>
+      <option value="name"{% if sort == 'name' %} selected{% endif %}>Name</option>
+      {%- endif %}
+    </select>
+  </div>
+
+  <div class="actions">
+    <button type="submit">Apply filters</button>
+    <a href="{{ form_action }}">Clear filters</a>
+    <span id="spinner" class="htmx-indicator" role="status">Loading&hellip;</span>
+  </div>
+</form>

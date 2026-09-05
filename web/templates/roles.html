@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{#-
+  `/roles` — SPEC §9's flat job list, "the what-opened-this-week view": the same filter set
+  as `/`, one row per job across all companies, default `posted_at DESC`.
+
+  `#results` is the `<tbody>` rather than a wrapper `<div>` so that a filter swap replaces
+  rows inside one table instead of stacking a second table with a second header row under the
+  first. The table header therefore lives here, outside the swapped region, where it belongs.
+
+  With no filters set this lists every open role of every one of the 19 families — the §13
+  acceptance criterion, and the reason nothing on this page filters by default.
+-#}
+{#- The tab title is composed in base.html from `page_title` ("Roles"), which this route
+    already passes, and the same value is this page's one <h1>. -#}
+{% block content %}
+  {%- set form_action = "/roles" %}
+  <h1>{{ page_title }}</h1>
+  {% include "_filters.html" %}
+
+  <div class="table-wrap">
+    <table class="roles">
+      <caption class="sr-only">Open roles across every tracked company</caption>
+      <thead>
+        <tr>
+          <th scope="col"><span class="sr-only">Bookmark</span></th>
+          <th scope="col">Title</th><th scope="col">Company</th><th scope="col">Family</th>
+          <th scope="col">Type</th><th scope="col">Seniority</th><th scope="col">Location</th>
+          <th scope="col">Posted</th>
+          <th scope="col"><span class="sr-only">Badges</span></th>
+        </tr>
+      </thead>
+      {#- No `aria-live`: the rows and the "Load more" button both live in here, so a polite
+          region would read a whole 50-row page aloud on every swap. `#spinner` in the filter
+          row (role="status", outside this element) is the announcement channel instead. -#}
+      <tbody id="results">
+        {%- include "_job_results.html" %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

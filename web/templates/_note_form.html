@@ -1,0 +1,56 @@
+{#-
+  The inline note + status + rating control (SPEC §9, `UserNote` in §5).
+
+  A real `<form method="post">` that posts to the same URL htmx posts to, so it works with
+  JavaScript off (the route answers a non-htmx POST with a 303 back to the company page).
+  With htmx it targets *itself* and swaps `outerHTML`: the server re-renders this same
+  partial with the saved values and `saved=True`, so the form is always showing what is
+  actually in the database rather than what was typed.
+
+  `note` is the `UserNote` row or `None` — a company with no row is the common case, and it
+  must render as an empty form rather than as an error.
+-#}
+{%- set current_status = note.status if note else 'none' -%}
+<form class="note-form"
+      method="post"
+      action="/company/{{ company_id }}/note"
+      hx-post="/company/{{ company_id }}/note"
+      hx-target="this"
+      hx-swap="outerHTML">
+  <div class="field">
+    <label for="note-status-{{ company_id }}">Status</label>
+    <select id="note-status-{{ company_id }}" name="status">
+      {%- for status in TRACKING_STATUS_ORDER %}
+      <option value="{{ status }}"{% if status == current_status %} selected{% endif %}>{{ status | label }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field rating">
+    <label for="note-rating-{{ company_id }}">Rating</label>
+    {#- An empty value clears the rating; the column is nullable and the CHECK constraint
+        only accepts 1-5, so there is no "0". -#}
+    <select id="note-rating-{{ company_id }}" name="rating">
+      <option value=""{% if not note or note.rating is none %} selected{% endif %}>&mdash;</option>
+      {%- for value in range(1, 6) %}
+      <option value="{{ value }}"{% if note and note.rating == value %} selected{% endif %}>{{ value }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="note-text-{{ company_id }}">Note</label>
+    <textarea id="note-text-{{ company_id }}" name="note" rows="3"
+              placeholder="Why this one?">{{ note.note if note and note.note else '' }}</textarea>
+  </div>
+
+  <div class="actions">
+    <button type="submit">Save</button>
+    {%- if saved %}
+    {#- role="status" announces the save to a screen reader without stealing focus. -#}
+    <span class="muted" role="status">Saved {{ note.updated_at | ago if note else '' }}</span>
+    {%- elif note %}
+    <span class="muted">Last saved {{ note.updated_at | ago }}</span>
+    {%- endif %}
+  </div>
+</form>

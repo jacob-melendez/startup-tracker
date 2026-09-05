@@ -1,0 +1,74 @@
+{%- import "_chips.html" as chips -%}
+{#-
+  One collapsed company row (SPEC §9): name, HQ city, sector chips, latest round + amount +
+  date, open role count, and the compact open-role-family breakdown.
+
+  Expansion is a native `<details>` — keyboard reachable and openable with no JavaScript at
+  all — whose `toggle` event htmx uses to fetch the panel exactly once (`toggle once`). The
+  body of 50 companies is therefore never fetched to render a list nobody expanded, and a
+  re-collapse costs nothing.
+
+  `job_filter_qs` carries only the role-level parameters to the panel endpoint. The panel
+  still returns *every* role of the company; those parameters decide which rows get marked
+  `.match`, never which rows exist (§9, §7.1).
+-#}
+<details class="company company-details"
+         hx-get="/company/{{ row.id }}/panel{{ job_filter_qs }}"
+         hx-trigger="toggle once"
+         hx-target="find .panel"
+         hx-swap="innerHTML">
+  <summary>
+    <span class="summary-main">
+      <a href="/company/{{ row.id }}">{{ row.name }}</a>
+      {%- if row.one_liner %}
+      <span class="muted">{{ row.one_liner }}</span>
+      {%- endif %}
+    </span>
+    <span class="summary-meta">
+      {%- if extra.hq_city %}
+      <span>{{ extra.hq_city }}</span>
+      {%- endif %}
+      {%- if row.stage and row.stage != 'unknown' %}
+      <span class="muted">{{ row.stage | label }}</span>
+      {%- endif %}
+      {%- if row.status and row.status != 'active' %}
+      <span class="muted">{{ row.status | label }}</span>
+      {%- endif %}
+      {%- if row.latest_round_type %}
+      <span>{{ row.latest_round_type | label }}
+        {{ row.latest_round_amount_usd | money }}
+        <span class="muted">{{ row.latest_round_announced_date | day }}</span></span>
+      {%- else %}
+      <span class="muted">No round on file</span>
+      {%- endif %}
+      <span class="count">{{ row.open_job_count }} open</span>
+      {#- Any `user_notes` row at all earns the pill: saving a note without touching the
+          status leaves `TrackingStatus.NONE`, and gating on the status would make that note
+          invisible in the list — the one place the user looks for it. `is not none` is
+          Jinja's identity test, not truthiness: the enum's value is the string "none". -#}
+      {%- if row.tracking_status is not none or row.rating %}
+      <span class="status-pill">
+        {{- row.tracking_status | label
+            if row.tracking_status and row.tracking_status != 'none' else 'Noted' -}}
+        {%- if row.rating %} · {{ row.rating }}/5{% endif -%}
+      </span>
+      {%- endif %}
+    </span>
+    {#- Two labelled groups, not one undifferentiated run of pills: a sector and a role family
+        can carry the identical word (a "Hardware" sector next to a "Hardware 1" family), so
+        each group names itself for a non-visual reader and the stylesheet gives the family
+        chips an outline rather than only a different colour. -#}
+    {%- if extra.sectors %}
+    <span class="summary-meta"><span class="sr-only">Sectors: </span>
+      {{- chips.sector_chips(extra.sectors) -}}
+    </span>
+    {%- endif %}
+    {%- if extra.open_roles_by_family %}
+    <span class="summary-meta"><span class="sr-only">Open roles by family: </span>
+      {{- chips.family_chips(extra.open_roles_by_family, filters.role_families) -}}
+    </span>
+    {%- endif %}
+  </summary>
+  {#- Replaced by `_company_panel.html` the first time this row is opened. -#}
+  <div class="panel"><p class="muted">Loading details&hellip;</p></div>
+</details>

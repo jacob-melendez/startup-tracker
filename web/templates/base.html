@@ -1,0 +1,46 @@
+{#-
+  The one page chrome (SPEC §9: "server-rendered, HTMX-enhanced, four pages, deliberately
+  plain styling").
+
+  Only two assets, both local: `web/static/styles.css` and the vendored htmx. Nothing here
+  may reference an external origin — a CDN <script> would be an outbound call made by the
+  *browser* on every page view, which is the same rule §2 states for the server, and a test
+  asserts it by grepping this file for any absolute URL scheme.
+
+  Fragments (`_*.html`) deliberately do NOT extend this template: they are swapped into an
+  already-rendered page by htmx, so they must be bare markup.
+-#}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {#- Every page supplies only its own segment, as the `page_title` its route already
+        passes; the app name is appended here so the suffix cannot drift page by page (it
+        once did: `/company/{id}` was the one tab title without it). -#}
+    <title>{% block title %}
+      {%- if page_title %}{{ page_title }} · {% endif -%}
+      Bay Area Startup Tracker
+    {%- endblock %}</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    {#- `defer` so parsing is never blocked; htmx binds on DOMContentLoaded. -#}
+    <script src="/static/htmx.min.js" defer></script>
+  </head>
+  <body>
+    {%- set path = request.url.path if request else "/" %}
+    <header class="topbar">
+      <a class="brand" href="/">Bay Area Startup Tracker</a>
+      <nav aria-label="Main">
+        <a class="nav-link{% if path == '/' or path.startswith('/company') %} active{% endif %}"
+           href="/">Companies</a>
+        <a class="nav-link{% if path.startswith('/roles') %} active{% endif %}"
+           href="/roles">Roles</a>
+        <a class="nav-link{% if path.startswith('/runs') %} active{% endif %}"
+           href="/runs">Runs</a>
+      </nav>
+    </header>
+    <main class="wrap">
+      {%- block content %}{% endblock %}
+    </main>
+  </body>
+</html>

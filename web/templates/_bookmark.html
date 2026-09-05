@@ -1,0 +1,19 @@
+{#-
+  The per-role star toggle (SPEC §9: "Bookmark/star toggle per row").
+
+  A one-button POST form, not a link: toggling is a state change, and a GET that mutates
+  would be followed by any prefetcher. It targets itself and swaps `outerHTML`, so the
+  response — this same partial with the new `starred` — is the single source of truth for
+  what the star shows; the template never guesses the next state client-side.
+
+  `aria-pressed` is what makes a toggle a toggle for a screen reader; the glyph is decorative
+  and hidden from the accessibility tree, with the real label in `.sr-only` text.
+-#}
+<form method="post" action="/jobs/{{ job_id }}/bookmark"
+      hx-post="/jobs/{{ job_id }}/bookmark" hx-target="this" hx-swap="outerHTML">
+  <button class="star{% if starred %} on{% endif %}" type="submit"
+          aria-pressed="{{ 'true' if starred else 'false' }}">
+    <span aria-hidden="true">{{ '★' if starred else '☆' }}</span>
+    <span class="sr-only">{{ 'Remove bookmark' if starred else 'Bookmark this role' }}</span>
+  </button>
+</form>

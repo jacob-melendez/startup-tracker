@@ -1,0 +1,58 @@
+{#-
+  Small display macros shared by the company row, the company panel and `/roles`
+  (SPEC §9's chips and badges). Macros, not includes, because each one is a single inline
+  element that needs an argument — an include would have to smuggle it through the context.
+
+  Imported without context (`{% import "_chips.html" as chips %}`): every macro takes what it
+  renders as an explicit argument, so none of them depend on a caller's variable names. The
+  `label` filter is an environment filter and is available regardless.
+
+  Class names come from the fixed list in the phase brief §6; no macro invents one.
+-#}
+
+{%- macro sector_chips(names) -%}
+  {%- for name in names %}
+    <span class="chip sector">{{ name }}</span>
+  {%- endfor %}
+{%- endmacro -%}
+
+{#- The §9 "compact breakdown of which role families are open".
+    `selected` are the families the page-level filter picked: those chips get `.match`, which
+    is highlighting, never hiding — every family with an open role is always listed.
+
+    The count carries a `.sr-only` "open" so a screen reader reads "ML / AI 48 open" instead
+    of a bare integer, and the `title` says the same thing on hover: the number is the only
+    thing that tells a family chip apart from a sector chip of the same name. -#}
+{%- macro family_chips(breakdown, selected=()) -%}
+  {%- for family, count in breakdown %}
+    <span class="chip family{% if family in selected %} match{% endif %}"
+          title="{{ count }} open {{ family | label }} role{{ '' if count == 1 else 's' }}">{{ family | label }} <span class="count">{{ count }}<span class="sr-only"> open</span></span></span>
+  {%- endfor %}
+{%- endmacro -%}
+
+{#- Badges that qualify one role. `flexible_signal` (§7.1) is shown here and only here as a
+    badge: it is an opt-in filter and must never hide a role. -#}
+{%- macro job_badges(job) -%}
+  {%- if job.is_remote %} <span class="badge remote">Remote</span>{% endif -%}
+  {%- if job.flexible_signal %} <span class="badge flexible">Flexible</span>{% endif -%}
+  {%- if job.closed_at %} <span class="badge closed">Closed</span>{% endif -%}
+{%- endmacro -%}
+
+{#- SPEC §6: the UI must make it obvious which contact the company published and which one we
+    constructed as a search shortcut. The enum's value doubles as the modifier class
+    (`published` / `constructed`). -#}
+{%- macro confidence_badge(confidence) -%}
+  <span class="badge {{ confidence }}">{{ confidence | label }}</span>
+{%- endmacro -%}
+
+{#- One external link, or plain text when `safe_url` rejected the URL. Every externally
+    sourced href in this app goes through that filter: job and company URLs are scraped from
+    third-party pages, so a `javascript:` value is a real injection vector. -#}
+{%- macro external_link(url, text) -%}
+  {%- set href = url | safe_url -%}
+  {%- if href -%}
+    <a href="{{ href }}" rel="noopener noreferrer" target="_blank">{{ text or url }}</a>
+  {%- else -%}
+    <span class="muted">{{ text or url }}</span>
+  {%- endif -%}
+{%- endmacro -%}

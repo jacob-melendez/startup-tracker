@@ -1,7 +1,9 @@
-# SPEC §11: up, down, migrate, seed, refresh, test, lint.
+# SPEC §11: up, down, migrate, seed, refresh, test, lint — and deliberately nothing else.
 # `make up` is the only setup step (SPEC §3). Database targets run inside Compose (Docker only);
 # `make test` and `make lint` run on the host and need uv (https://docs.astral.sh/uv/). `make test`
 # also needs Docker for testcontainers unless TEST_DATABASE_URL is set (see .env.example).
+# There is no `make dev`: running the web app on the host with auto-reload is
+# `uv run uvicorn web.app:app --reload` — one command, documented in the README.
 
 COMPOSE ?= docker compose
 UV      ?= uv
@@ -11,8 +13,8 @@ UV      ?= uv
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-10s %s\n", $$1, $$2}'
 
-up: ## Start Postgres 16 and wait until healthy (the app service joins in Phase 4, when web/app.py exists)
-	$(COMPOSE) up -d --wait db
+up: ## Start Postgres 16 + the web app and wait until both are healthy (UI on http://localhost:8000)
+	$(COMPOSE) up -d --wait db app
 
 down: ## Stop all services (data volume is kept; `docker compose down -v` wipes it)
 	$(COMPOSE) down

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{#-
+  `/runs` — SPEC §9's ingestion health page: "last 100 FetchRun rows: connector, timestamps,
+  status, counts, error text. Highlight any connector with no successful run in over 2× its
+  cadence. Makes silent breakage visible."
+
+  Two blocks, and the first is the point of the page. Every *configured* connector is listed
+  (from `config/connectors.yaml`, the only place a cadence is defined), including ones that
+  have never run and ones not implemented yet — a connector that quietly stopped producing
+  rows would otherwise be invisible, because a connector that never runs also never writes a
+  `fetch_runs` row to appear in the table below.
+-#}
+{% block title %}Runs · Bay Area Startup Tracker{% endblock %}
+
+{% block content %}
+  <h1>Ingestion health</h1>
+
+  <div class="runs">
+    {%- if health %}
+    {%- for row in health %}
+    <div class="run-row{% if row.stale %} stale{% endif %}">
+      <span>{{ row.connector }}</span>
+      <span class="muted">
+        {%- if row.cadence %}<code>{{ row.cadence }}</code>
+          {%- if row.period and row.period.days %} · every {{ row.period.days }}d{% endif %}
+        {%- else %}on demand{% endif %}</span>
+      <span>
+        {%- if row.last_ok %}last ok {{ row.last_ok | ago }}
+        {%- else %}<span class="muted">never succeeded</span>{% endif %}</span>
+      {#- The §9 highlight. The row class carries the styling; the word carries the meaning
+          for anyone reading with styles off or with a screen reader. #}
+      {% if row.stale %}<strong>Stale</strong>{% endif %}
+      {% if not row.enabled %}<span class="muted">disabled</span>{% endif %}
+      {% if not row.implemented %}<span class="muted">not implemented</span>{% endif %}
+    </div>
+    {%- endfor %}
+    {%- else %}
+    <p class="empty">No connectors configured — check <code>config/connectors.yaml</code>.</p>
+    {%- endif %}
+  </div>
+
+  <h2>Last 100 runs</h2>
+  {%- if runs %}
+  <div class="table-wrap">
+    {#- `runs` is what the stylesheet targets for the header row, the cell rhythm and the
+        monospaced error text; without it this table renders with browser defaults. -#}
+    <table class="runs">
+      <caption class="sr-only">The most recent connector runs, newest first</caption>
+      <thead>
+        <tr>
+          <th scope="col">Connector</th><th scope="col">Started</th><th scope="col">Finished</th>
+          <th scope="col">Duration</th><th scope="col">Status</th><th scope="col">Fetched</th>
+          <th scope="col">Upserted</th><th scope="col">Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {%- for run in runs %}
+        <tr>
+          <td>{{ run.connector }}</td>
+          <td><span title="{{ run.started_at | day }}">{{ run.started_at | ago }}</span></td>
+          <td>
+            {%- if run.finished_at %}{{ run.finished_at | ago }}
+            {%- else %}<span class="muted">still running</span>{% endif %}</td>
+          <td>
+            {%- if run.finished_at %}{{ (run.started_at, run.finished_at) | duration }}
+            {%- else %}<span class="muted">&mdash;</span>{% endif %}</td>
+          {#- The enum's value doubles as the modifier class: ok / partial / error. -#}
+          <td><span class="status {{ run.status }}">{{ run.status | label }}</span></td>
+          <td>{{ run.n_fetched }}</td>
+          <td>{{ run.n_upserted }}</td>
+          <td>
+            {%- if run.error_text %}
+            {#- Truncated inline so one long traceback cannot push the counts off screen;
+                the full text is one keyboard-reachable disclosure away. -#}
+            <details>
+              <summary>{{ run.error_text | truncate(80) }}</summary>
+              <pre>{{ run.error_text }}</pre>
+            </details>
+            {%- else %}<span class="muted">&mdash;</span>{% endif %}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="empty">No runs yet — run <code>make refresh</code>.</p>
+  {%- endif %}
+{% endblock %}

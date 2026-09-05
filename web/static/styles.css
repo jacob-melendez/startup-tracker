@@ -1,0 +1,171 @@
+/* Bay Area Startup Tracker — the whole stylesheet (SPEC §9: "Deliberately plain styling").
+   Hand-written: no framework, no build step, no imported or remotely hosted fonts. A dense
+   information tool for one reader, so the budget goes to legibility at 3,000+ rows rather than
+   to decoration — tight vertical rhythm, hairline rules instead of boxes, metadata that reads
+   as metadata. Every rule is written against the tokens, so dark mode is one override block
+   rather than a second stylesheet. Declarations are packed onto shared lines to stay inside
+   the 200-line budget CLAUDE.md sets for this file. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fff; --fg: #16181d; --muted: #667080;
+  --line: #dee2e8;    /* hairline rules; nothing in here gets a full border */
+  --raised: #f4f6f8;  /* chips, filter bar, table headers, the open row */
+  --accent: #10527f;
+  --match: #a8420a; --match-bg: #fff3e6;  /* filter hits — never signalled by colour alone */
+  --ok: #1c7a3c; --warn: #8a6000; --err: #b3261e;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171b; --fg: #e5e8ec; --muted: #949ead; --line: #2b3038; --raised: #1d2027;
+    --accent: #7ab8e6; --match: #ffab5e; --match-bg: #3a2a16;
+    --ok: #5fbe85; --warn: #d6ab48; --err: #ef827b;
+  }
+}
+
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Layout -------------------------------------------------------------------------------- */
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
+/* The same max-width and side padding as .wrap: the topbar sits outside it in the markup, so
+   without this the brand hangs off the left of everything below it on a wide screen. */
+.topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px;
+  max-width: 1120px; margin: 0 auto 14px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line); }
+.brand { margin-right: auto; font-weight: 700; }
+.nav-link { margin-left: 14px; color: var(--muted); text-decoration: none; }
+.nav-link.active { color: var(--fg); font-weight: 600; text-decoration: underline; }
+
+/* The filter row wrapping with flexbox is the entire responsive story — no breakpoints. Items
+   are top-aligned: the multi-selects are four rows tall, and bottom-aligning the row would
+   strand the search box halfway down it. */
+.filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 14px;
+  padding: 10px 12px; margin-bottom: 12px; background: var(--raised); border-radius: 6px; }
+.field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.field label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); }
+.field input, .field select, .note-form textarea { font: inherit; max-width: 220px;
+  padding: 3px 5px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; }
+/* The sector facet alone runs to hundreds of options; the shared 220px cap clips its longest
+   names, so that one field opts into a wider box rather than every field growing. */
+.field.wide select { max-width: 320px; }
+.actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+/* The expanded row's own filter (SPEC §9 "filterable within the row") lays out like `.filters`
+   but is deliberately not that class: it sits inside a panel, not above a page, so it stays
+   flat — no raised background, no radius — and a test selector for the page's filter form
+   cannot match it. */
+.roles-filter { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 14px;
+  margin: 0 0 8px; }
+
+/* Chips are metadata: no border, no hover, no pointer cursor — they must not read as buttons.
+   Badges assert something about the row they sit in, so they get an outline and more weight. */
+.chip { display: inline-block; padding: 1px 7px; margin: 0 4px 2px 0; font-size: 11.5px;
+  white-space: nowrap; color: var(--muted); background: var(--raised); border-radius: 9px; }
+.chip.sector { color: var(--fg); }
+/* Outlined pill against the sector chip's filled one: the two kinds sit side by side and can
+   read the same ("Hardware" the sector, "Hardware 1" the family), so shape — not colour
+   alone — is what tells them apart in greyscale. */
+.chip.family { font-variant-numeric: tabular-nums;  /* "software 12" counts stay aligned */
+  background: none; box-shadow: inset 0 0 0 1px var(--line); }
+/* Weight + outline as well as colour, so the matched family is legible to a colour-blind
+   reader and on a monochrome screen. */
+.chip.family.match { font-weight: 700; color: var(--match); background: var(--match-bg);
+  outline: 1px solid currentcolor; box-shadow: none; }
+.badge { display: inline-block; padding: 0 5px; font-size: 11px; font-weight: 600;
+  white-space: nowrap; border: 1px solid currentcolor; border-radius: 3px; }
+.badge.flexible { color: var(--accent); }
+.badge.remote, .badge.published { color: var(--ok); }
+/* Dashed = we constructed this link; the company never published it (SPEC §6). The border
+   style, not just the colour, is what distinguishes it from .published. */
+.badge.constructed { color: var(--warn); border-style: dashed; }
+.badge.closed { color: var(--muted); }
+
+/* Company list ---------------------------------------------------------------------------
+   The <details> element carries `company-details` (the HTMX contract name); `.company` is
+   matched alongside it so either spelling styles the row. */
+
+.companies { border-top: 1px solid var(--line); }
+.company, .company-details { border-bottom: 1px solid var(--line); }
+.companies summary { padding: 6px 4px; cursor: pointer; }
+.companies summary:hover, .companies details[open] > summary { background: var(--raised); }
+/* `inline`, not `inline-block`: an inline-block wide enough to wrap is pushed below the native
+   disclosure triangle, orphaning it on a line of its own. Inline text flows around it. */
+.summary-main { display: inline; font-weight: 600; }
+.summary-main .muted { font-weight: 400; }  /* the one-liner is not part of the name */
+/* Flex, so the metadata pieces are separated by a real gap rather than by whatever whitespace
+   survived the template — "San Francisco Series A $15M 3 open" has to read as four facts. */
+.summary-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 9px;
+  margin-top: 1px; font-size: 12px; color: var(--muted); }
+.count { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* The expanded panel is deliberately subordinate to its summary — indented behind a left
+   rule, so the eye can still scan the collapsed rows straight down the left edge. */
+.panel { padding: 2px 0 12px 14px; margin: 0 0 8px 6px; border-left: 2px solid var(--line); }
+.panel-section { margin-top: 12px; }
+/* h2, because the panel is a page in its own right on /company/{id}: <h1> is the company name
+   and the seven section headings sit under it. They read as labels, not as headlines. */
+.panel-section > h2 { margin: 0 0 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.panel-section > h1 { margin: 0 0 2px; font-size: 20px; }
+
+/* Tables: hairline row rules only, never a border per cell. A wide table scrolls inside its
+   own wrapper so the page itself never scrolls sideways. */
+/* `position: relative` is load-bearing: it makes this the containing block for the `.sr-only`
+   spans in the table headers, which are absolutely positioned. Without it they escape the
+   overflow, sit at the *unclipped* table's width, and make the whole page scroll sideways. */
+.table-wrap { position: relative; overflow-x: auto; }
+table.roles, table.funding, .runs { width: 100%; font-size: 13px; border-collapse: collapse; }
+table.roles th, table.funding th, .runs th { font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+table.roles th, table.roles td, table.funding th, table.funding td, .runs th, .runs td {
+  padding: 4px 12px 4px 0; text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--line); }
+/* The connector-health rows are <div>s, not table rows: one wrapping line per connector. */
+.run-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px;
+  padding: 3px 6px; border-bottom: 1px solid var(--line); }
+/* Three cues at once — tint, weight and a left bar — so "this row matched the filter" and
+   "this connector is stale" both survive colour-blindness. */
+tr.match, .run-row.stale { font-weight: 600; background: var(--match-bg); }
+tr.match > td:first-child, .run-row.stale { box-shadow: inset 3px 0 0 var(--match); }
+.runs code { font-family: var(--mono); }
+.runs pre { max-width: 70ch; margin: 0; font: 12px/1.4 var(--mono); white-space: pre-wrap; }
+.status.ok, .status.partial, .status.error { font-family: var(--mono); font-weight: 600; }
+.status.ok { color: var(--ok); }
+.status.partial { color: var(--warn); }
+.status.error { color: var(--err); }
+
+/* Controls ------------------------------------------------------------------------------ */
+
+.load-more { display: block; width: 100%; margin: 14px 0; padding: 8px; font: inherit;
+  color: var(--accent); background: var(--bg); border: 1px dashed var(--line);
+  border-radius: 5px; cursor: pointer; }
+.load-more:hover { background: var(--raised); }
+/* htmx puts .htmx-request on the indicator element for the life of the request. `visibility`
+   rather than `display` so revealing the spinner never reflows the row it sits in. */
+.htmx-indicator { visibility: hidden; font-size: 12px; color: var(--muted); }
+.htmx-indicator.htmx-request { visibility: visible; }
+.star { padding: 0 4px; font-size: 15px; line-height: 1; color: var(--muted);
+  background: none; border: 0; cursor: pointer; }
+.star.on { color: var(--warn); }
+.note-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+/* Width, not `flex`: the textarea's parent is a `.field`, which is a *column* flex container,
+   so a flex-basis here would be read as a 280px-tall box and shove the other controls down. */
+.note-form textarea { width: 320px; max-width: 100%; min-height: 3.4em; }
+.rating { font-variant-numeric: tabular-nums; }
+.status-pill { display: inline-block; padding: 0 7px; font-size: 11px;
+  background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
+
+/* States -------------------------------------------------------------------------------- */
+
+.muted { color: var(--muted); }
+.empty { padding: 28px 4px; text-align: center; color: var(--muted); }
+.error-page { padding: 40px 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; white-space: nowrap; border: 0; clip-path: inset(50%); }

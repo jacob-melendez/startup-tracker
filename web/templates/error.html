@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{#-
+  The one error page, rendered by the app's exception handlers with the real status code
+  preserved (404 for an unknown company, 400 for a hand-edited cursor or an invalid enum
+  value in the query string).
+
+  It extends `base.html` on purpose: someone who followed a stale bookmark should land on a
+  page with the navigation still on it, not on a bare JSON blob.
+-#}
+{% block title %}{{ status_code }} · Bay Area Startup Tracker{% endblock %}
+
+{% block content %}
+  <div class="error-page">
+    <h1>{{ status_code }}</h1>
+    <p>{{ message }}</p>
+    <p><a href="/">&larr; Back to companies</a></p>
+  </div>
+{% endblock %}

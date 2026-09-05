@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{#-
+  `/company/{id}` — SPEC §9's "standalone, linkable version of the expanded row".
+
+  Literally the same partial the collapsed row lazy-loads, wrapped in the same `.panel` box
+  and rendered inline with `standalone=True`: no `hx-get`, nothing to expand, so the page is
+  complete and useful with JavaScript switched off and stays a stable permalink.
+-#}
+{#- No `title` block: base.html composes "<company name> · Bay Area Startup Tracker" from the
+    `page_title` this route passes, so this permalink is named like every other page. -#}
+{% block content %}
+  <div class="panel">
+    {%- include "_company_panel.html" %}
+  </div>
+{% endblock %}

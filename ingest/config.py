@@ -9,11 +9,13 @@ Both files are validated with Pydantic on load so a typo fails fast with a path 
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped]  # no py.typed
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,10 +55,62 @@ class ConnectorConfig(BaseModel):
     @field_validator("cadence")
     @classmethod
     def _five_field_cron(cls, value: str | None) -> str | None:
-        if value is not None and len(value.split()) != 5:
+        """A cadence must be a cron expression APScheduler can actually run.
+
+        The field count is checked first, so the specific "five-field" message still fires for
+        ``"0 5 * *"``. Then the expression is *parsed*, because counting fields catches nothing
+        about their values: ``"0 99 * * *"`` and ``"0 5 */3 * z"`` both have five. Parsing here
+        is what makes this module's promise true — a typo fails on load with a path to the
+        field (``connectors.sec_edgar.cadence``) rather than at the first thing that happens to
+        parse it, which today is :func:`cadence_period` inside the ``/runs`` request handler,
+        where an unhandled ``ValueError`` turns the one page that exists to show breakage into
+        a 500.
+        """
+        if value is None:
+            return value
+        if len(value.split()) != 5:
             msg = f"cadence must be a five-field cron expression, got {value!r}"
             raise ValueError(msg)
+        try:
+            CronTrigger.from_crontab(value, timezone=UTC)
+        except ValueError as exc:  # out-of-range field, unknown weekday name, bad step, ...
+            msg = f"cadence {value!r} is not a valid cron expression: {exc}"
+            raise ValueError(msg) from exc
         return value
+
+
+#: An arbitrary fixed instant to measure a cadence from. Fixed, so :func:`cadence_period` is a
+#: pure function of the cron expression: measuring from "now" would make a monthly cadence 28
+#: days in February and 31 in March, and the staleness threshold would drift with the calendar.
+_CADENCE_REFERENCE = datetime(2025, 1, 1, tzinfo=UTC)
+
+
+@cache
+def cadence_period(cadence: str | None) -> timedelta | None:
+    """Nominal interval between two firings of a five-field cron expression (SPEC §9 "twice its
+    cadence"). ``None`` for an on-demand connector (``cadence: null``).
+
+    Uses APScheduler's ``CronTrigger`` — the same cron implementation the Phase 6 scheduler will
+    run, so ``/runs`` can never disagree with the schedule about what "daily" means — measured
+    between the next two fire times after a fixed reference instant. That makes an *irregular*
+    cadence report its typical period rather than an exact one: ``0 9 2 * *`` (monthly) is 31
+    days and ``0 5 */3 * *`` is 3 days even though both are shorter across some month
+    boundaries. For deciding whether a connector has gone quiet, typical is what is wanted.
+
+    ``None`` also comes back for an expression that can never fire (``0 0 30 2 *``); the caller
+    treats that the same as on-demand, since a connector that never fires cannot be overdue.
+    """
+    if cadence is None:
+        return None
+    trigger = CronTrigger.from_crontab(cadence, timezone=UTC)
+    # APScheduler ships no type information, so annotate what it hands back.
+    first: datetime | None = trigger.get_next_fire_time(None, _CADENCE_REFERENCE)
+    if first is None:
+        return None
+    second: datetime | None = trigger.get_next_fire_time(first, first + timedelta(seconds=1))
+    if second is None:
+        return None
+    return second - first
 
 
 class ConnectorsConfig(BaseModel):
