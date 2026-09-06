@@ -237,6 +237,9 @@ async def test_runs_page_lists_configured_connectors_and_the_run_table(
         session,
         "sec_edgar",
         started_at=NOW,
+        # Finished, so `status` is the run's real outcome. The template renders the status cell
+        # only for a finished run — see the in-flight test below.
+        finished_at=NOW + timedelta(seconds=3),
         status=enums.FetchRunStatus.ERROR,
         error_text="HTTP 503 from efts.sec.gov",
     )
@@ -257,6 +260,28 @@ async def test_runs_page_lists_configured_connectors_and_the_run_table(
     # Every configured connector appears, including the ones with no implementation yet.
     named = {connector for _, connector in _RUN_ROW.findall(body)}
     assert {"greenhouse", "sec_edgar", "opencorporates", "product_hunt"} <= named
+
+
+async def test_an_in_flight_run_reads_running_rather_than_error(
+    client: httpx.AsyncClient, session: AsyncSession
+) -> None:
+    """``FetchRun.status`` defaults to ``error`` and the row is committed *before* the fetch
+    starts (``ingest.pipeline._start_run``), so an unfinished run carries ``error`` while its
+    outcome is simply not known yet.
+
+    Rendering that default would label a healthy hour-long ``company_site`` sweep a failure for
+    its whole duration, and would contradict the health block above it, which excludes
+    unfinished runs from the failure streak for exactly this reason
+    (``db.queries.consecutive_failure_counts``). The row is still listed — SPEC §9 wants the
+    last 100 runs — with every cell whose value depends on the outcome held back.
+    """
+    await make_run(session, "company_site", started_at=NOW, finished_at=None)
+    await session.commit()
+
+    body = (await client.get("/runs")).text
+
+    assert '<span class="muted">Running</span>' in body
+    assert '<span class="status error">Error</span>' not in body
 
 
 async def test_healthz_does_not_touch_the_database(client: httpx.AsyncClient) -> None:
@@ -1010,6 +1035,9 @@ def test_connector_health_marks_stale_only_past_twice_the_cadence() -> None:
                 "ashby": now - timedelta(days=2, hours=1),  # just outside
                 "sec_edgar": now - timedelta(days=5),  # 3-day cadence: inside 6 days
             },
+            # SPEC §7.2's failure streaks are the other, independent signal (Phase 6); this
+            # test is about §9's cadence one alone, so nothing is failing here.
+            {},
             now=now,
         )
     }

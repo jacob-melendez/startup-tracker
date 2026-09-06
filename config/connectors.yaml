@@ -2,6 +2,10 @@
 # schedule is defined — the scheduler (Phase 6) reads it at startup; nothing in Python has a cron.
 #
 # cadence     five-field cron expression, evaluated in UTC; null = on-demand only.
+#             Write weekdays as NAMES (mon..sun), never as numbers: APScheduler 3.x — the parser
+#             both the scheduler and /runs use — numbers them Monday=0, while crontab numbers
+#             them Sunday=0, so "0 4 * * 0" would fire on Monday and quietly contradict SPEC
+#             §7.2's table. Names mean the same day under either convention.
 # rate_limit  requests_per_second is enforced per host by ingest/http.py;
 #             max_requests_per_host_per_run caps how many pages one host serves in one run
 #             (SPEC §4 Tier 3: 5 pages per domain per run).
@@ -25,7 +29,7 @@ connectors:
         - Pooled Investment Fund
 
   ycombinator:
-    cadence: "0 4 * * 0"            # weekly, Sunday 04:00 — the directory changes slowly
+    cadence: "0 4 * * sun"          # weekly, Sunday 04:00 — the directory changes slowly
     rate_limit: {requests_per_second: 2}
     respect_robots: true            # www.ycombinator.com/robots.txt allows /companies
     options:
@@ -87,11 +91,11 @@ connectors:
       max_items_per_feed: 100
 
   product_hunt:
-    cadence: "0 5 * * 0"            # weekly, Sunday 05:00 — not implemented yet (SPEC §4 Tier 2 #6)
+    cadence: "0 5 * * sun"          # weekly, Sunday 05:00 — not implemented yet (SPEC §4 Tier 2 #6)
     rate_limit: {requests_per_second: 1}
 
   company_site:
-    cadence: "0 3 * * 6"            # weekly, Saturday 03:00 (and on demand for new companies)
+    cadence: "0 3 * * sat"          # weekly, Saturday 03:00 (and on demand for new companies)
     rate_limit:
       requests_per_second: 0.5      # SPEC §4 Tier 3: at most 1 request per domain per 2 s
       max_requests_per_host_per_run: 5

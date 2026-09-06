@@ -1,5 +1,7 @@
-# SPEC §3: Docker Compose services `db`, `app`, `scheduler`. Phase 1 defines `db` and `app`;
-# `scheduler` arrives in Phase 6. `make up` is the only setup step.
+# SPEC §3: Docker Compose services `db`, `app`, `scheduler` — all three started by `make up`,
+# which is the only setup step. `db` holds the data, `app` serves the SPEC §9 pages and reads
+# nothing else, `scheduler` is the only service that reaches the outside world on a clock
+# (SPEC §2: ingestion is batch-only, and no request handler ever fetches).
 services:
   db:
     image: postgres:16
@@ -54,6 +56,39 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+
+  # SPEC §7.2's cron service: APScheduler firing one job per connector on the cadence in
+  # config/connectors.yaml (the only place a schedule is defined). Same image and environment as
+  # `app` so a scheduled run and `docker compose run --rm app python cli.py refresh` are the same
+  # code path — see scheduler.py. It fetches nothing at startup: the first run of a connector is
+  # at its next cron fire, and `make refresh` is how to run one now. Editing the YAML takes
+  # effect on `docker compose restart scheduler`.
+  scheduler:
+    build: .
+    command: ["python", "scheduler.py"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tracker}:${POSTGRES_PASSWORD:-tracker}@db:5432/${POSTGRES_DB:-tracker}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    # No ports: it serves nothing. No healthcheck either — an APScheduler process has no
+    # endpoint to probe, and a heartbeat file invented for Compose's benefit would be a second
+    # thing to keep true. Its liveness signal is the /runs page: a connector that stops running
+    # goes Stale there (SPEC §9), which is the breakage worth seeing anyway.
+    restart: unless-stopped
+    # `stop`/`restart` land inside a run often enough to matter: the four ATS connectors run one
+    # after another from 06:00 for minutes at a time, and a restart is how a connectors.yaml edit
+    # is picked up. On SIGTERM the process waits for the run in flight to finalize its fetch_runs
+    # row (scheduler.SHUTDOWN_DRAIN_SECONDS = 300), so it needs longer than Compose's default 10 s
+    # grace before SIGKILL — a kill mid-run leaves a row that says "still running" for ever.
+    # Keep this above SHUTDOWN_DRAIN_SECONDS; the wait ends as soon as the run does, so an idle
+    # scheduler still stops instantly.
+    stop_grace_period: 330s
 
 volumes:
   pgdata:

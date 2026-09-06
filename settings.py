@@ -65,7 +65,16 @@ class Settings(BaseSettings):
     def _postgres_only(cls, value: str) -> str:
         # Non-negotiable: no SQLite (or any other) fallback — see CLAUDE.md.
         if not value.startswith(ASYNC_POSTGRES_SCHEME):
-            msg = f"DATABASE_URL must start with {ASYNC_POSTGRES_SCHEME!r}; got {value!r}"
+            # Only the *scheme* is echoed back, never the value. This message is printed to
+            # stderr verbatim by ``cli.py``'s callback and ``scheduler.py``'s ``main``, and the
+            # single likeliest way to reach it is pasting a working libpq URL
+            # (``postgresql://user:password@host/db``) that merely lacks ``+asyncpg`` — so the
+            # value in hand is usually a live credential. The scheme is the whole of what the
+            # reader needs, since the scheme is what is wrong. Everything after ``://`` is
+            # userinfo, host and database, so cutting there cannot leak a password.
+            scheme, separator, _ = value.partition("://")
+            got = repr(scheme + separator) if separator else "a value with no scheme"
+            msg = f"DATABASE_URL must start with {ASYNC_POSTGRES_SCHEME!r}; got {got}"
             raise ValueError(msg)
         return value
 

@@ -23,6 +23,21 @@ CONFIG_DIR = ROOT / "config"
 CONNECTORS_YAML = CONFIG_DIR / "connectors.yaml"
 REGIONS_YAML = CONFIG_DIR / "regions.yaml"
 
+#: Connectors with a block in ``config/connectors.yaml`` but no implementation yet (SPEC §4
+#: Tier 2 #6, #7). They are still configured, still listed by ``/runs`` and ``cli.py stats``,
+#: and marked in both, so an unimplemented source reads as unimplemented rather than as one
+#: that has silently never run.
+#:
+#: Written out here rather than derived from :func:`ingest.connectors.all_connectors` for two
+#: reasons. Nothing under ``web/`` may import a connector module — that package pulls in the
+#: HTTP client, and a request handler must not be one import away from an outbound call
+#: (SPEC §2, CLAUDE.md) — while ``ingest.config`` reads local YAML and is already imported
+#: there. And the registry is not the right question anyway: ``seed`` is implemented
+#: (:mod:`ingest.seed`) yet deliberately absent from it, so "not in the registry" and "not
+#: implemented" are different sets. ``tests/test_docs.py`` pins this one against the registry
+#: and the YAML so it cannot drift from either.
+UNIMPLEMENTED_CONNECTORS = frozenset({"product_hunt", "opencorporates"})
+
 
 def _normalize_city(city: str) -> str:
     return " ".join(city.split()).casefold()

@@ -27,6 +27,16 @@ Phase 4 (SPEC §9) adds the browse layer the web app reads:
 * :func:`facet_cities`, :func:`facet_sectors`, :func:`last_successful_runs` — the small lookups
   the filter form and ``/runs`` need.
 
+Phase 6 (SPEC §7.2, §8, §12 Phase 6) adds the operations layer the scheduler, ``/runs`` and the
+two new CLI commands share:
+
+* :func:`consecutive_failure_counts` — the failure streak per connector, a window function over
+  ``fetch_runs`` (SPEC §7.2 "fails 3 consecutive runs");
+* :func:`stats_snapshot` — every number ``cli.py stats`` prints, as one round trip;
+* :func:`merge_candidate_rows` and :func:`merge_companies` — the read and the write behind
+  ``cli.py merge-review``, which is the only thing in the system allowed to delete a company
+  (SPEC §8 "Do not auto-merge").
+
 None of it fetches anything: a web request handler only ever reads the local database (SPEC §2).
 """
 
@@ -37,19 +47,23 @@ import calendar
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal, cast
 
 from sqlalchemy import (
     ColumnElement,
     CursorResult,
+    Executable,
     Integer,
+    ScalarSelect,
     Select,
     Text,
     and_,
     any_,
     bindparam,
+    case,
+    delete,
     exists,
     false,
     func,
@@ -57,7 +71,7 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import BindParameter
@@ -68,11 +82,15 @@ from db.models import (
     CompanyLocation,
     CompanySector,
     CompanySource,
+    Contact,
     FetchRun,
     FundingRound,
+    Investor,
     Job,
     JobBookmark,
     Location,
+    MergeCandidate,
+    Person,
     Sector,
     Source,
     UserNote,
@@ -1350,3 +1368,988 @@ async def last_successful_runs(session: AsyncSession) -> dict[str, datetime]:
         .group_by(FetchRun.connector)
     )
     return {connector: started_at for connector, started_at in rows}
+
+
+# ================================================ Phase 6 — operations (SPEC §7.2, §8, §12)
+
+#: SPEC §7.2: "A connector that fails 3 consecutive runs should log at ERROR and surface
+#: prominently on ``/runs``". One constant for both signals, so the scheduler's ERROR line and
+#: the ``/runs`` banner can never disagree about what "failing" means.
+CONSECUTIVE_FAILURE_ALERT = 3
+
+
+async def consecutive_failure_counts(
+    session: AsyncSession, *, connector: str | None = None
+) -> dict[str, int]:
+    """``connector -> how many of its most recent finished runs failed in a row`` (SPEC §7.2).
+
+    Shape — one window function over ``fetch_runs`` plus a ``GROUP BY``, never a query per
+    connector::
+
+        SELECT connector, count(*) FROM (
+            SELECT connector,
+                   sum(CASE WHEN status <> 'error' THEN 1 ELSE 0 END) OVER (
+                       PARTITION BY connector
+                       ORDER BY started_at DESC, id DESC
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS completed_above
+              FROM fetch_runs
+             WHERE finished_at IS NOT NULL) s
+        WHERE s.completed_above = 0
+        GROUP BY connector
+
+    The running sum counts the runs that *did not* fail from the newest row down to and
+    including the current one, so it is ``0`` exactly while every run at or above this one is an
+    error — that is, while the row is inside the head streak. The first ``ok``/``partial`` makes
+    the sum ``1``, and every older row inherits at least that, so nothing below the streak is
+    ever counted. ``count(*)`` per connector over the ``0`` rows is therefore the streak length.
+
+    Every clause earns its place:
+
+    * **``finished_at IS NOT NULL``.** ``FetchRun.status`` defaults to ``error`` so that a run
+      which dies mid-flight is recorded as one (SPEC §7.2), which means an *in-flight* run also
+      reads ``error``. Counting it would report a failure for a run that is still going. A
+      process killed mid-run leaves such a row for ever; excluding it means the row neither
+      starts nor breaks a streak, which is the honest answer for a run whose outcome nobody
+      knows.
+    * **``ORDER BY started_at DESC, id DESC``.** Newest first, because the question is about the
+      *current* streak. ``id`` breaks ties deterministically — two runs of one connector can
+      share a ``started_at`` (``server_default=now()`` is the transaction clock), and without
+      the tiebreak the window frame would be ambiguous and the count could wobble between
+      calls.
+    * **``partial`` is not a failure.** A partial run completed its scan and merely had per-item
+      trouble, so it proves the source is reachable and ends the streak — the same reading
+      :data:`COMPLETED_RUN_STATUSES` already uses for the incremental window. This is
+      deliberately *wider* than :func:`last_successful_runs`, which counts ``ok`` alone: that
+      one answers SPEC §9's "no successful run in over twice its cadence", this answers §7.2's
+      "fails 3 consecutive runs". A connector can therefore show "last ok nine days ago" and
+      "0 consecutive failures" at once, and both statements are true — it has been limping, not
+      broken. ``/runs`` shows both numbers for exactly that reason.
+
+    Connectors with no current streak (their newest finished run completed) are **absent** from
+    the mapping rather than present with ``0``; callers use ``.get(name, 0)``. A connector that
+    has never run, or a name that does not exist, likewise yields nothing — "never ran" is the
+    staleness signal's business, not this one's.
+
+    ``connector=`` narrows the whole statement to one connector so the scheduler can ask about
+    the run it has just finished without scanning the table for the others.
+    """
+    # ``sum`` over a CASE rather than ``count(*) FILTER``: the frame has to be evaluated for
+    # every row, including the failed ones, and only a plain aggregate can be windowed here.
+    completed = case((FetchRun.status != enums.FetchRunStatus.ERROR, 1), else_=0)
+    completed_above = func.sum(completed).over(
+        partition_by=FetchRun.connector,
+        order_by=(FetchRun.started_at.desc(), FetchRun.id.desc()),
+        rows=(None, 0),
+    )
+    finished = select(
+        FetchRun.connector.label("connector"), completed_above.label("completed_above")
+    ).where(FetchRun.finished_at.is_not(None))
+    if connector is not None:
+        finished = finished.where(FetchRun.connector == connector)
+    head = finished.subquery("finished_runs")
+    rows = await session.execute(
+        select(head.c.connector, func.count())
+        .where(head.c.completed_above == 0)
+        .group_by(head.c.connector)
+    )
+    return {name: streak for name, streak in rows}
+
+
+# ------------------------------------------------------------------- cli.py stats (SPEC §12)
+
+#: SPEC §12 Phase 6: "companies and jobs added in the last 7 days".
+STATS_WINDOW_DAYS = 7
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StatsSnapshot:
+    """Every number ``cli.py stats`` prints, read in one statement (:func:`stats_snapshot`).
+
+    Flat and pre-split by design: the CLI formats, it does not compute. Splitting
+    ``companies``/``companies_active``/``companies_dead`` and the two contact confidences here
+    rather than in the printer keeps the arithmetic inside the transaction that read it.
+    """
+
+    companies: int
+    #: ``status='active'``; ``companies`` minus these two is the ``acquired`` remainder.
+    companies_active: int
+    companies_dead: int
+    #: ``closed_at IS NULL`` — a closed job is history, never deleted (SPEC §2).
+    jobs_open: int
+    jobs_closed: int
+    funding_rounds: int
+    investors: int
+    people: int
+    #: SPEC §6's two confidences, counted apart because the difference is the point.
+    contacts_published: int
+    contacts_constructed: int
+    #: Rows of ``locations`` / ``sectors`` — the vocabularies, not the M:N links.
+    locations: int
+    sectors: int
+    #: ``resolved_at IS NULL`` — the queue ``merge-review`` works through (SPEC §8).
+    merge_candidates_open: int
+    merge_candidates_resolved: int
+    fetch_runs: int
+    user_notes: int
+    job_bookmarks: int
+    #: ``first_seen_at >= now - STATS_WINDOW_DAYS``.
+    companies_added: int
+    jobs_added: int
+
+
+def _count_of(entity: Any, *predicates: ColumnElement[bool]) -> ScalarSelect[int]:
+    """``(SELECT count(*) FROM <entity> WHERE ...)`` as one scalar sub-select."""
+    return select(func.count()).select_from(entity).where(*predicates).scalar_subquery()
+
+
+async def stats_snapshot(session: AsyncSession, *, now: datetime) -> StatsSnapshot:
+    """The row counts, the two lifecycle splits and the 7-day intake — one round trip.
+
+    Shape — a ``SELECT`` with **no FROM clause** whose every column is an independent scalar
+    sub-select (``SELECT (SELECT count(*) FROM companies) AS companies, (SELECT count(*) FROM
+    jobs WHERE closed_at IS NULL) AS jobs_open, ...``). Nineteen counts over nine unrelated
+    tables have no join key in common, so joining them would either multiply rows or need
+    nineteen ``GROUP BY`` queries; sub-selects keep it to one statement, which matters twice
+    over: it is one round trip, and it is one snapshot — every number is read at the same
+    MVCC instant, so the report cannot say 3,188 companies in one line and imply 3,190 in
+    another because an ingest run committed in between.
+
+    ``now`` is injected rather than read from the clock so a test can pin the boundary of the
+    :data:`STATS_WINDOW_DAYS` window; the window is a half-open ``first_seen_at >= now - 7d``.
+    """
+    since = now - timedelta(days=STATS_WINDOW_DAYS)
+    row = (
+        await session.execute(
+            select(
+                _count_of(Company).label("companies"),
+                _count_of(Company, Company.status == enums.CompanyStatus.ACTIVE).label("active"),
+                _count_of(Company, Company.status == enums.CompanyStatus.DEAD).label("dead"),
+                _count_of(Job, Job.closed_at.is_(None)).label("jobs_open"),
+                _count_of(Job, Job.closed_at.is_not(None)).label("jobs_closed"),
+                _count_of(FundingRound).label("funding_rounds"),
+                _count_of(Investor).label("investors"),
+                _count_of(Person).label("people"),
+                _count_of(Contact, Contact.confidence == enums.ContactConfidence.PUBLISHED).label(
+                    "contacts_published"
+                ),
+                _count_of(Contact, Contact.confidence == enums.ContactConfidence.CONSTRUCTED).label(
+                    "contacts_constructed"
+                ),
+                _count_of(Location).label("locations"),
+                _count_of(Sector).label("sectors"),
+                _count_of(MergeCandidate, MergeCandidate.resolved_at.is_(None)).label("merge_open"),
+                _count_of(MergeCandidate, MergeCandidate.resolved_at.is_not(None)).label(
+                    "merge_resolved"
+                ),
+                _count_of(FetchRun).label("fetch_runs"),
+                _count_of(UserNote).label("user_notes"),
+                _count_of(JobBookmark).label("job_bookmarks"),
+                _count_of(Company, Company.first_seen_at >= since).label("companies_added"),
+                _count_of(Job, Job.first_seen_at >= since).label("jobs_added"),
+            )
+        )
+    ).one()
+    return StatsSnapshot(
+        companies=row.companies,
+        companies_active=row.active,
+        companies_dead=row.dead,
+        jobs_open=row.jobs_open,
+        jobs_closed=row.jobs_closed,
+        funding_rounds=row.funding_rounds,
+        investors=row.investors,
+        people=row.people,
+        contacts_published=row.contacts_published,
+        contacts_constructed=row.contacts_constructed,
+        locations=row.locations,
+        sectors=row.sectors,
+        merge_candidates_open=row.merge_open,
+        merge_candidates_resolved=row.merge_resolved,
+        fetch_runs=row.fetch_runs,
+        user_notes=row.user_notes,
+        job_bookmarks=row.job_bookmarks,
+        companies_added=row.companies_added,
+        jobs_added=row.jobs_added,
+    )
+
+
+# ------------------------------------------------------------ cli.py merge-review (SPEC §8)
+
+#: The ``companies`` columns a merge may copy from the discarded row onto the survivor.
+#:
+#: This **must** stay equal to :data:`ingest.pipeline.COMPANY_MERGE_FIELDS`, which is the source
+#: of truth: those are the fields connectors write and whose owner is tracked in
+#: ``Company.field_provenance`` (SPEC §8), and a merge fills exactly the same set. It is
+#: re-declared instead of imported because importing it here would close a cycle —
+#: ``ingest.pipeline`` imports :mod:`db.queries`, and :mod:`db.queries` imports
+#: ``ingest.base`` — so a test asserts the two tuples are equal and fails the moment either
+#: moves.
+MERGEABLE_COMPANY_FIELDS: tuple[str, ...] = (
+    "name",
+    "domain",
+    "website_url",
+    "one_liner",
+    "thesis",
+    "founded_year",
+    "employee_est",
+    "stage",
+    "status",
+    "ats_provider",
+    "ats_token",
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CompanySummary:
+    """One side of a duplicate pair, as ``merge-review`` renders it side by side."""
+
+    id: int
+    name: str
+    domain: str | None
+    #: The HQ city if one is flagged, else the alphabetically first — see :func:`_summary_columns`.
+    city: str | None
+    stage: enums.Stage
+    status: enums.CompanyStatus
+    #: The denormalized column (SPEC §5), i.e. the number ``/`` shows for this company.
+    open_job_count: int
+    funding_round_count: int
+    contact_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    #: ``company_sources.connector`` for this company, alphabetically.
+    connectors: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MergeCandidateRow:
+    """An unresolved :class:`~db.models.MergeCandidate` with both companies summarized.
+
+    ``a``/``b`` keep the stored orientation (``company_id_a < company_id_b``), which is what
+    makes the reviewer's ``[1]``/``[2]`` keys stable between renders.
+    """
+
+    id: int
+    similarity: float
+    reason: str
+    a: CompanySummary
+    b: CompanySummary
+
+
+def _summary_columns(company: Any, prefix: str) -> list[Any]:
+    """The :class:`CompanySummary` columns for one side of a pair, labelled ``<prefix>_*``.
+
+    The three aggregates are correlated scalar sub-selects rather than joins: ``funding_rounds``,
+    ``contacts`` and ``company_sources`` are all 1:N, so joining them would emit the pair once
+    per round times contact times connector. ``city`` is a ``LIMIT 1`` sub-select ordered
+    HQ-first then alphabetically, the same rule :attr:`CompanyExtras.hq_city` applies.
+    """
+    return [
+        company.id.label(f"{prefix}_id"),
+        company.name.label(f"{prefix}_name"),
+        company.domain.label(f"{prefix}_domain"),
+        select(Location.city)
+        .join(CompanyLocation, CompanyLocation.location_id == Location.id)
+        .where(CompanyLocation.company_id == company.id)
+        .order_by(CompanyLocation.is_hq.desc(), Location.city)
+        .limit(1)
+        .correlate(company)
+        .scalar_subquery()
+        .label(f"{prefix}_city"),
+        company.stage.label(f"{prefix}_stage"),
+        company.status.label(f"{prefix}_status"),
+        company.open_job_count.label(f"{prefix}_open_job_count"),
+        _correlated_count(FundingRound, FundingRound.company_id, company).label(f"{prefix}_rounds"),
+        _correlated_count(Contact, Contact.company_id, company).label(f"{prefix}_contacts"),
+        company.first_seen_at.label(f"{prefix}_first_seen_at"),
+        company.last_seen_at.label(f"{prefix}_last_seen_at"),
+        select(
+            func.array_agg(
+                aggregate_order_by(CompanySource.connector, CompanySource.connector.asc())
+            )
+        )
+        .where(CompanySource.company_id == company.id)
+        .correlate(company)
+        .scalar_subquery()
+        .label(f"{prefix}_connectors"),
+    ]
+
+
+def _correlated_count(entity: Any, foreign_key: Any, company: Any) -> ScalarSelect[int]:
+    """``(SELECT count(*) FROM <entity> WHERE <fk> = <company alias>.id)``."""
+    return (
+        select(func.count())
+        .select_from(entity)
+        .where(foreign_key == company.id)
+        .correlate(company)
+        .scalar_subquery()
+    )
+
+
+def _summary(row: Any, prefix: str) -> CompanySummary:
+    """Build one :class:`CompanySummary` from the ``<prefix>_*`` half of a result row."""
+    return CompanySummary(
+        id=getattr(row, f"{prefix}_id"),
+        name=getattr(row, f"{prefix}_name"),
+        domain=getattr(row, f"{prefix}_domain"),
+        city=getattr(row, f"{prefix}_city"),
+        stage=getattr(row, f"{prefix}_stage"),
+        status=getattr(row, f"{prefix}_status"),
+        open_job_count=getattr(row, f"{prefix}_open_job_count"),
+        funding_round_count=getattr(row, f"{prefix}_rounds"),
+        contact_count=getattr(row, f"{prefix}_contacts"),
+        first_seen_at=getattr(row, f"{prefix}_first_seen_at"),
+        last_seen_at=getattr(row, f"{prefix}_last_seen_at"),
+        # ``array_agg`` over no rows is NULL, not an empty array.
+        connectors=tuple(getattr(row, f"{prefix}_connectors") or ()),
+    )
+
+
+async def merge_candidate_rows(session: AsyncSession, *, limit: int) -> list[MergeCandidateRow]:
+    """The unresolved duplicate pairs ``cli.py merge-review`` walks, most similar first.
+
+    Shape — one statement for the *whole* list, not one per row: ``merge_candidates`` joined
+    twice to ``companies`` (aliases ``company_a``/``company_b``), each side carrying its four
+    scalar sub-selects (:func:`_summary_columns`). A reviewer needs both sides of every pair in
+    front of them before deciding, and issuing eight queries per pair would turn a 20-pair
+    review into 160 round trips.
+
+    Ordering is ``similarity DESC, id ASC``: the most confident duplicates first, then oldest
+    first so the list is stable while the reviewer works through it and a pair that was skipped
+    keeps its place. Only ``resolved_at IS NULL`` rows appear — a pair the reviewer called "not
+    a duplicate" is stamped resolved and must never be offered again (SPEC §8).
+
+    Both joins are inner joins, which is safe: both FKs are ``NOT NULL`` and both cascade on
+    delete, so a candidate whose company was merged away has already been deleted with it.
+    """
+    if limit < 1:
+        raise ValueError(f"limit must be at least 1; got {limit}")
+    company_a = aliased(Company, name="company_a")
+    company_b = aliased(Company, name="company_b")
+    rows = await session.execute(
+        select(
+            MergeCandidate.id,
+            MergeCandidate.similarity,
+            MergeCandidate.reason,
+            *_summary_columns(company_a, "a"),
+            *_summary_columns(company_b, "b"),
+        )
+        .join(company_a, company_a.id == MergeCandidate.company_id_a)
+        .join(company_b, company_b.id == MergeCandidate.company_id_b)
+        .where(MergeCandidate.resolved_at.is_(None))
+        .order_by(MergeCandidate.similarity.desc(), MergeCandidate.id)
+        .limit(limit)
+    )
+    return [
+        MergeCandidateRow(
+            id=row.id,
+            similarity=row.similarity,
+            reason=row.reason,
+            a=_summary(row, "a"),
+            b=_summary(row, "b"),
+        )
+        for row in rows
+    ]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MergeResult:
+    """What :func:`merge_companies` actually did, so the CLI can report it row by row.
+
+    Every count is a fact about the database after the merge, not an estimate: a reviewer who
+    is told "4 jobs moved, 1 discarded" can check both numbers, and ``note_discarded`` carries
+    the user's own text back out so it can be printed rather than lost.
+    """
+
+    keep_id: int
+    drop_id: int
+    #: ``companies`` columns that were NULL on the survivor and were filled from the discarded
+    #: row, in :data:`MERGEABLE_COMPANY_FIELDS` order.
+    fields_filled: tuple[str, ...]
+    jobs_moved: int
+    #: Jobs whose ``external_id`` the survivor already had; the survivor's row is the one kept.
+    jobs_discarded: int
+    bookmarks_moved: int
+    funding_rounds_moved: int
+    people_moved: int
+    people_deduped: int
+    contacts_moved: int
+    contacts_discarded: int
+    locations_moved: int
+    sectors_moved: int
+    sources_moved: int
+    #: ``(connector, external_id)`` pairs that could not be kept: ``company_sources`` is one row
+    #: per ``(company, connector)``, so when both companies identify themselves to the same
+    #: connector under *different* ids only the survivor's survives. Reported rather than dropped
+    #: silently because that connector's next run no longer resolves the lost id by
+    #: ``external_id`` (SPEC §8 step 0) and will create the duplicate again — the reviewer may
+    #: want to merge the other way round instead. Empty in the ordinary case.
+    sources_discarded: tuple[tuple[str, str], ...] = ()
+    candidates_repointed: int
+    note_moved: bool
+    #: The discarded company's note text when both companies had a note; ``None`` otherwise.
+    note_discarded: str | None
+    #: Notes on starred duplicate jobs that could not be rescued, because the survivor's own
+    #: copy of that posting was already starred. Handed back for the same reason
+    #: :attr:`note_discarded` is: the caller prints them, so no user-written text is destroyed
+    #: without being shown first. Empty in the ordinary case.
+    bookmark_notes_discarded: tuple[str, ...] = ()
+
+
+async def _execute_rowcount(session: AsyncSession, statement: Executable) -> int:
+    """Run a DML statement and return how many rows it touched.
+
+    ``AsyncSession.execute`` is typed as the generic ``Result``; an UPDATE or DELETE always
+    yields a ``CursorResult`` whose ``rowcount`` is the number of rows affected.
+    """
+    result = cast("CursorResult[Any]", await session.execute(statement))
+    affected: int = result.rowcount
+    return affected
+
+
+async def merge_companies(
+    session: AsyncSession, *, keep_id: int, drop_id: int, now: datetime
+) -> MergeResult:
+    """Fold ``drop_id`` into ``keep_id`` — the write behind ``cli.py merge-review`` (SPEC §8).
+
+    This is the one place in the system that deletes a company. ``db/models.py`` states the
+    licence ("companies are only ever deleted by ``merge-review``") and it is narrow: the
+    duplicate row, and the child rows that physically cannot survive a unique constraint on the
+    survivor. Everything else is *moved*, because SPEC §2 makes the database the historical
+    record. Nothing here is automatic — SPEC §8 forbids auto-merging, so a human chose both ids.
+
+    **The order of operations is load-bearing.** Every child table hangs off ``companies`` with
+    ``ON DELETE CASCADE``, so anything still pointing at the discarded row when the ``DELETE``
+    lands is destroyed by the database:
+
+    1. Read both rows (``SELECT ... FOR UPDATE``, ordered by id so two concurrent merges take
+       the two locks in the same order, and so an ingest run cannot write to either company
+       mid-merge). ``ValueError`` for equal ids or a company that does not exist. The discarded
+       row's values are snapshotted *now*, because step 4 needs them after it is gone.
+    2. Move the children, each with a ``NOT EXISTS`` guard against the survivor's own unique
+       constraint, so the statement moves what can move and leaves the collisions behind:
+
+       * ``job_bookmarks`` **first**. A drop-side job whose ``external_id`` the survivor already
+         has is about to be discarded; if the user starred it and the survivor's twin carries no
+         bookmark, the star moves to the twin. Doing this after the job move would be too late —
+         the bookmark would already be cascade-deleted — and doing it without the "twin has no
+         bookmark" guard would violate the bookmark's primary key.
+       * ``jobs`` guarded on ``uq_jobs_company_id_external_id``. What stays behind is exactly the
+         set of duplicated postings, counted as ``jobs_discarded``.
+       * ``funding_rounds`` and ``people``: no unique constraint, so all of them move. People are
+         then de-duplicated *within* the survivor on ``(full_name, title, linkedin_url)`` with
+         NULLs folded to ``''``, keeping the lowest id. Only byte-identical rows are removed —
+         never a fuzzy match — so no observation is lost, just a repeated one.
+       * ``contacts`` (``uq_contacts_company_id_kind_value``), ``company_locations``,
+         ``company_sectors`` and ``company_sources`` (composite primary keys): same guard. The
+         survivor's row wins every collision, which is why a moved location keeps the discarded
+         row's ``is_hq`` flag but a colliding one does not change the survivor's. Two collisions
+         carry information the winning row would otherwise lose, and both are salvaged *before*
+         the row that holds it is cascaded away: a contact the survivor only ``constructed``
+         while the discarded company ``published`` it is promoted in place
+         (:func:`_promote_colliding_contacts`), and a ``company_sources`` row whose
+         ``external_id`` the survivor does not have adopts it
+         (:func:`_adopt_source_external_ids`). What genuinely cannot be kept — a second
+         ``external_id`` for a connector the survivor already identifies itself to — comes back
+         in ``sources_discarded`` for the caller to print, because losing it means that
+         connector will create the company again on its next run.
+       * ``user_notes``: if the survivor has no note the row moves wholesale
+         (``note_moved``) — and "no note" means no *content*, so the blank row an empty Save
+         leaves behind does not outrank a filled one. If both hold something the survivor's
+         stands and the other's *text* comes back in ``note_discarded`` — the user's own writing
+         is never destroyed silently, it is handed to the caller to print.
+       * ``merge_candidates``: every *other* pair that referenced the discarded company is
+         repointed onto the survivor, renormalized to ``company_id_a < company_id_b`` and
+         skipped when that pair already exists or would be a self-pair. The pair under review
+         references the discarded company, so the cascade removes it — which is why a merged
+         pair leaves no ``resolved_at`` row behind, while a "not a duplicate" decision does.
+    3. ``DELETE FROM companies WHERE id = :drop``. This has to happen *before* step 4:
+       ``ix_companies_domain`` is unique, so copying the discarded row's domain onto the
+       survivor while both rows still exist raises a unique violation.
+    4. Fill the survivor's NULLs from the snapshot: for each :data:`MERGEABLE_COMPANY_FIELDS`
+       column the survivor has no value for, take the discarded row's value and, unless the
+       survivor already claims that field, its ``field_provenance`` owner too (SPEC §8 — the
+       survivor's own entries always win). ``first_seen_at`` becomes the earlier of the two and
+       ``last_seen_at`` the later, so the survivor inherits the full observed history. ``name``,
+       ``stage`` and ``status`` are ``NOT NULL`` and so are never filled; in particular ``name``
+       cannot change here, which is what keeps ``normalized_name`` consistent with it without
+       recomputing anything.
+    5. Refresh the survivor's denormalized columns (SPEC §5): it has just gained jobs and rounds,
+       so ``open_job_count``, ``latest_job_posted_at`` and ``latest_round_id`` are all stale, and
+       ``/``'s default sort reads them.
+
+    ``now`` stamps the moved ``user_notes`` row's ``updated_at`` (the column's ``onupdate`` would
+    otherwise use the database clock), so one injected clock describes the whole review.
+
+    **Nothing here commits.** The caller owns the transaction — ``merge-review`` commits once per
+    pair, so a reviewer who quits after three merges keeps exactly those three, and a failure
+    part-way through a single merge rolls the whole pair back rather than leaving a company
+    half-folded.
+    """
+    if keep_id == drop_id:
+        raise ValueError(f"cannot merge company {keep_id} into itself")
+    snapshot = {
+        row.id: row
+        for row in await session.execute(
+            select(
+                Company.id,
+                Company.field_provenance,
+                Company.first_seen_at,
+                Company.last_seen_at,
+                *(getattr(Company, field) for field in MERGEABLE_COMPANY_FIELDS),
+            )
+            .where(Company.id.in_((keep_id, drop_id)))
+            .order_by(Company.id)
+            .with_for_update()
+        )
+    }
+    missing = [company_id for company_id in (keep_id, drop_id) if company_id not in snapshot]
+    if missing:
+        raise ValueError(f"no such company: {', '.join(str(company_id) for company_id in missing)}")
+    keep, drop = snapshot[keep_id], snapshot[drop_id]
+
+    bookmarks_moved = await _rescue_bookmarks(session, keep_id=keep_id, drop_id=drop_id)
+    jobs_moved = await _move_guarded(
+        session, Job, Job.external_id, keep_id=keep_id, drop_id=drop_id
+    )
+    jobs_discarded = await _remaining(session, Job, drop_id)
+    # After the rescue and the move, the jobs still on the discarded company are exactly the
+    # duplicates about to be cascade-deleted, so this is the last moment their bookmark notes
+    # can be read.
+    bookmark_notes_discarded = await _stranded_bookmark_notes(session, drop_id)
+    funding_rounds_moved = await _execute_rowcount(
+        session,
+        update(FundingRound).where(FundingRound.company_id == drop_id).values(company_id=keep_id),
+    )
+    people_moved = await _execute_rowcount(
+        session, update(Person).where(Person.company_id == drop_id).values(company_id=keep_id)
+    )
+    people_deduped = await _dedupe_people(session, keep_id)
+    await _promote_colliding_contacts(session, keep_id=keep_id, drop_id=drop_id)
+    contacts_moved = await _move_guarded(
+        session, Contact, Contact.kind, Contact.value, keep_id=keep_id, drop_id=drop_id
+    )
+    contacts_discarded = await _remaining(session, Contact, drop_id)
+    locations_moved = await _move_guarded(
+        session,
+        CompanyLocation,
+        CompanyLocation.location_id,
+        keep_id=keep_id,
+        drop_id=drop_id,
+    )
+    sectors_moved = await _move_guarded(
+        session, CompanySector, CompanySector.sector_id, keep_id=keep_id, drop_id=drop_id
+    )
+    sources_moved = await _move_guarded(
+        session, CompanySource, CompanySource.connector, keep_id=keep_id, drop_id=drop_id
+    )
+    await _adopt_source_external_ids(session, keep_id=keep_id, drop_id=drop_id)
+    sources_discarded = await _stranded_source_external_ids(
+        session, keep_id=keep_id, drop_id=drop_id
+    )
+    note_moved, note_discarded = await _merge_user_notes(
+        session, keep_id=keep_id, drop_id=drop_id, now=now
+    )
+    candidates_repointed = await _repoint_merge_candidates(
+        session, keep_id=keep_id, drop_id=drop_id
+    )
+
+    await session.execute(delete(Company).where(Company.id == drop_id))
+
+    provenance: dict[str, str] = dict(keep.field_provenance)
+    filled: dict[str, Any] = {}
+    for field in MERGEABLE_COMPANY_FIELDS:
+        if getattr(keep, field) is not None or getattr(drop, field) is None:
+            continue
+        filled[field] = getattr(drop, field)
+        owner = drop.field_provenance.get(field)
+        if owner is not None and field not in provenance:
+            provenance[field] = owner
+    await session.execute(
+        update(Company)
+        .where(Company.id == keep_id)
+        .values(
+            **filled,
+            # JSONB: a fresh dict, never an in-place mutation (as ``ingest.pipeline`` does).
+            field_provenance=provenance,
+            first_seen_at=min(keep.first_seen_at, drop.first_seen_at),
+            last_seen_at=max(keep.last_seen_at, drop.last_seen_at),
+        )
+    )
+    await refresh_company_denormalized_columns(session, [keep_id])
+    return MergeResult(
+        keep_id=keep_id,
+        drop_id=drop_id,
+        fields_filled=tuple(filled),
+        jobs_moved=jobs_moved,
+        jobs_discarded=jobs_discarded,
+        bookmarks_moved=bookmarks_moved,
+        funding_rounds_moved=funding_rounds_moved,
+        people_moved=people_moved,
+        people_deduped=people_deduped,
+        contacts_moved=contacts_moved,
+        contacts_discarded=contacts_discarded,
+        locations_moved=locations_moved,
+        sectors_moved=sectors_moved,
+        sources_moved=sources_moved,
+        sources_discarded=sources_discarded,
+        candidates_repointed=candidates_repointed,
+        note_moved=note_moved,
+        note_discarded=note_discarded,
+        bookmark_notes_discarded=bookmark_notes_discarded,
+    )
+
+
+async def _stranded_bookmark_notes(session: AsyncSession, drop_id: int) -> tuple[str, ...]:
+    """The notes on bookmarks that :func:`_rescue_bookmarks` could not move.
+
+    Called after the rescue and the job move, when the jobs still pointing at the discarded
+    company are exactly the duplicated postings the cascade is about to delete. A bookmark on
+    one of them survived only if the survivor's twin had none; the rest carry the user's own
+    words to the grave unless someone reads them out first, which is the same rule
+    :func:`_merge_user_notes` applies to a company note. The star itself is not worth
+    reporting — the survivor's copy of that posting is already starred — but the text is.
+    """
+    rows = await session.execute(
+        select(JobBookmark.note)
+        .join(Job, Job.id == JobBookmark.job_id)
+        .where(Job.company_id == drop_id, JobBookmark.note.is_not(None))
+        .order_by(JobBookmark.job_id)
+    )
+    return tuple(note for note in rows.scalars() if note)
+
+
+async def _move_guarded(
+    session: AsyncSession, entity: Any, *unique_columns: Any, keep_id: int, drop_id: int
+) -> int:
+    """Move ``entity``'s rows from ``drop_id`` to ``keep_id``, skipping the ones that would
+    collide with a row the survivor already has.
+
+    ``unique_columns`` are the columns that, together with ``company_id``, are unique — the
+    ``external_id`` of a job, the ``(kind, value)`` of a contact, the second half of a composite
+    primary key. The guard is a correlated ``NOT EXISTS`` against an alias of the same table::
+
+        UPDATE <t> SET company_id = :keep
+         WHERE <t>.company_id = :drop
+           AND NOT EXISTS (SELECT 1 FROM <t> AS twin
+                            WHERE twin.company_id = :keep AND twin.<u> = <t>.<u> ...)
+
+    One statement, so a company with 300 jobs costs one round trip and not 300. The rows left
+    behind are duplicates of rows the survivor already holds; they die with the company delete.
+    """
+    twin = aliased(entity, name="twin")
+    matches = [getattr(twin, column.key) == column for column in unique_columns]
+    collision = (
+        select(twin.company_id)
+        .where(twin.company_id == keep_id, *matches)
+        .correlate(entity)
+        .exists()
+    )
+    return await _execute_rowcount(
+        session,
+        update(entity).where(entity.company_id == drop_id, ~collision).values(company_id=keep_id),
+    )
+
+
+async def _promote_colliding_contacts(session: AsyncSession, *, keep_id: int, drop_id: int) -> None:
+    """Lift the survivor's contact to ``published`` when the discarded company's twin is the
+    observation.
+
+    ``uq_contacts_company_id_kind_value`` ignores ``confidence``, so the same URL can sit on both
+    companies as an address one of them published and as a link the other merely constructed from
+    its domain (the common case: ``acme.com``'s footer links to ``linkedin.com/company/acme``,
+    which is byte for byte what :mod:`ingest.contacts` builds for ``acme.io``). ``_move_guarded``
+    resolves that collision by row, keeping the survivor's — which, when the survivor's is the
+    constructed one, would delete an observation and leave a guess in its place. SPEC §6 forbids
+    exactly that, and the ingest path guards it twice (``ingest.pipeline._upsert_contacts``'
+    ``ON CONFLICT ... WHERE`` clause and ``_insert_constructed_contact``'s ``DO NOTHING``); this
+    is the third place two rows for one ``(kind, value)`` can meet, and it applies the same rule.
+
+    Shape — an ``UPDATE ... FROM`` promoting the *survivor's own row in place*, so the row id,
+    the "survivor's row wins every collision" invariant and ``contacts_moved`` /
+    ``contacts_discarded`` are all untouched; only the confidence and the ``source_id`` behind it
+    change hands::
+
+        UPDATE contacts SET confidence = 'published', source_id = loser.source_id
+          FROM contacts AS loser
+         WHERE contacts.company_id = :keep AND contacts.confidence <> 'published'
+           AND loser.company_id = :drop AND loser.kind = contacts.kind
+           AND loser.value = contacts.value AND loser.confidence = 'published'
+
+    ``source_id`` travels with the promotion because it is the provenance of the observation: a
+    constructed row has none by construction, so the survivor gains the ``sources`` row that
+    proves where the address was seen. This runs *before* the move, while the discarded row is
+    still there to read.
+    """
+    loser = aliased(Contact, name="loser")
+    await session.execute(
+        update(Contact)
+        .where(
+            Contact.company_id == keep_id,
+            Contact.confidence != enums.ContactConfidence.PUBLISHED,
+            loser.company_id == drop_id,
+            loser.kind == Contact.kind,
+            loser.value == Contact.value,
+            loser.confidence == enums.ContactConfidence.PUBLISHED,
+        )
+        .values(confidence=enums.ContactConfidence.PUBLISHED, source_id=loser.source_id)
+    )
+
+
+async def _adopt_source_external_ids(session: AsyncSession, *, keep_id: int, drop_id: int) -> None:
+    """Fill the survivor's missing ``company_sources.external_id`` from the discarded row.
+
+    ``company_sources`` is keyed on ``(company_id, connector)``, so a drop-side row for a
+    connector the survivor already lists cannot move — but its ``external_id`` is the identifier
+    SPEC §8 step 0 resolves that connector's records by, and a survivor row that has none is
+    strictly worse than one that has the discarded row's. This is the same "fill what the
+    survivor does not know, never overwrite what it does" rule step 4 applies to the ``companies``
+    columns, applied to the one column a composite-key collision would otherwise throw away for
+    nothing::
+
+        UPDATE company_sources SET external_id = stranded.external_id
+          FROM company_sources AS stranded
+         WHERE company_sources.company_id = :keep AND company_sources.external_id IS NULL
+           AND stranded.company_id = :drop AND stranded.connector = company_sources.connector
+           AND stranded.external_id IS NOT NULL
+
+    A survivor that already has an id keeps it; that case is a genuine loss and is reported by
+    :func:`_stranded_source_external_ids` instead.
+    """
+    stranded = aliased(CompanySource, name="stranded")
+    await session.execute(
+        update(CompanySource)
+        .where(
+            CompanySource.company_id == keep_id,
+            CompanySource.external_id.is_(None),
+            stranded.company_id == drop_id,
+            stranded.connector == CompanySource.connector,
+            stranded.external_id.is_not(None),
+        )
+        .values(external_id=stranded.external_id)
+    )
+
+
+async def _stranded_source_external_ids(
+    session: AsyncSession, *, keep_id: int, drop_id: int
+) -> tuple[tuple[str, str], ...]:
+    """The ``(connector, external_id)`` pairs the merge cannot keep, for the caller to print.
+
+    Called after the move and after :func:`_adopt_source_external_ids`, so what is left at
+    ``drop_id`` with an ``external_id`` that the survivor's row for that connector does not now
+    carry is exactly the set about to die with the cascade. One row per ``(company, connector)``
+    is a primary key, not a policy, so there is nowhere to put a second id — which makes saying
+    so the only available mitigation. It matters because SPEC §8 step 0 resolves a connector's
+    own records through this column: with the id gone, the next run of that connector no longer
+    recognises the record as one it has already seen and inserts the duplicate company the
+    reviewer just merged away. The inner join is safe — a row only stays behind because the
+    survivor has one for the same connector.
+    """
+    twin = aliased(CompanySource, name="twin")
+    rows = await session.execute(
+        select(CompanySource.connector, CompanySource.external_id)
+        .join(
+            twin,
+            and_(twin.company_id == keep_id, twin.connector == CompanySource.connector),
+        )
+        .where(
+            CompanySource.company_id == drop_id,
+            CompanySource.external_id.is_not(None),
+            twin.external_id.is_distinct_from(CompanySource.external_id),
+        )
+        .order_by(CompanySource.connector)
+    )
+    return tuple((row.connector, row.external_id) for row in rows)
+
+
+async def _remaining(session: AsyncSession, entity: Any, drop_id: int) -> int:
+    """How many of ``entity``'s rows :func:`_move_guarded` had to leave behind at ``drop_id``."""
+    count: int | None = await session.scalar(
+        select(func.count()).select_from(entity).where(entity.company_id == drop_id)
+    )
+    return count or 0
+
+
+async def _rescue_bookmarks(session: AsyncSession, *, keep_id: int, drop_id: int) -> int:
+    """Move a star off a job that is about to be discarded, onto the survivor's own copy.
+
+    Shape — an ``UPDATE ... FROM`` over two aliases of ``jobs``::
+
+        UPDATE job_bookmarks SET job_id = keep_twin.id
+          FROM jobs AS drop_job, jobs AS keep_twin
+         WHERE job_bookmarks.job_id = drop_job.id
+           AND drop_job.company_id = :drop
+           AND keep_twin.company_id = :keep
+           AND keep_twin.external_id = drop_job.external_id
+           AND NOT EXISTS (SELECT 1 FROM job_bookmarks b WHERE b.job_id = keep_twin.id)
+
+    Only the *colliding* jobs are addressed (the join on ``external_id`` is what selects them);
+    a bookmark on a job that simply moves needs no help, since the job keeps its id. The
+    ``NOT EXISTS`` is the bookmark's own primary key: when the survivor's twin is already
+    starred there is nothing to rescue, and that row's *note* is collected by
+    :func:`_stranded_bookmark_notes` so the caller can print it before the cascade takes it.
+    """
+    drop_job = aliased(Job, name="drop_job")
+    keep_twin = aliased(Job, name="keep_twin")
+    twin_bookmark = aliased(JobBookmark, name="twin_bookmark")
+    already_starred = (
+        select(twin_bookmark.job_id)
+        .where(twin_bookmark.job_id == keep_twin.id)
+        .correlate(keep_twin)
+        .exists()
+    )
+    return await _execute_rowcount(
+        session,
+        update(JobBookmark)
+        .where(
+            JobBookmark.job_id == drop_job.id,
+            drop_job.company_id == drop_id,
+            keep_twin.company_id == keep_id,
+            keep_twin.external_id == drop_job.external_id,
+            ~already_starred,
+        )
+        .values(job_id=keep_twin.id),
+    )
+
+
+async def _dedupe_people(session: AsyncSession, keep_id: int) -> int:
+    """Delete people rows the survivor now holds twice, keeping the lowest id.
+
+    ``people`` has no unique constraint, so the move above can leave the same person listed
+    twice — the ``sec_edgar`` filing and the company's own team page name the same founder.
+    Identity is exact: ``full_name`` plus ``title`` plus ``linkedin_url``, with NULLs folded to
+    ``''`` so two rows that both lack a title still match. Never fuzzy — a near-match is a
+    different person until a human says otherwise, which is the same rule SPEC §8 applies to
+    companies. Deleting a byte-identical row loses no observation, and ``source_id`` is the only
+    column that can differ; the lowest id (the first sighting) is the one kept.
+    """
+    twin = aliased(Person, name="earlier_person")
+    duplicate = (
+        select(twin.id)
+        .where(
+            twin.company_id == keep_id,
+            twin.id < Person.id,
+            twin.full_name == Person.full_name,
+            func.coalesce(twin.title, "") == func.coalesce(Person.title, ""),
+            func.coalesce(twin.linkedin_url, "") == func.coalesce(Person.linkedin_url, ""),
+        )
+        .correlate(Person)
+        .exists()
+    )
+    return await _execute_rowcount(
+        session, delete(Person).where(Person.company_id == keep_id, duplicate)
+    )
+
+
+async def _merge_user_notes(
+    session: AsyncSession, *, keep_id: int, drop_id: int, now: datetime
+) -> tuple[bool, str | None]:
+    """``(moved, discarded note text)`` — the user's own writing, never destroyed silently.
+
+    Three cases, and the third is the only one that loses anything: no note on the discarded
+    company (nothing to do); a note there but none on the survivor (the row moves, keeping its
+    status, rating and text); a note on both (the survivor's stands, and the other's text is
+    returned so the caller can print it before the cascade takes the row). ``status`` and
+    ``rating`` of a discarded note are not carried over — merging two pipeline states would be
+    guessing, and the text is where the user's actual words are.
+
+    "The survivor has a note" is a question about *content*, not about a row. ``save_note``
+    (``web/routes/companies.py``) upserts unconditionally, so pressing Save with the form
+    untouched — or clearing a note that had been written — leaves ``(status='none',
+    rating=NULL, note=NULL)``: a row the UI itself renders exactly like no note at all. Letting
+    that stub count as the survivor's note would silently destroy a real ``applied / 5`` on the
+    other side *and* report nothing, since there is no text to hand back. So a content-free
+    survivor row is deleted and the discarded row moves in its place; with nothing on either
+    side there is no second pipeline state to guess between, which is what the paragraph above
+    is protecting.
+    """
+    drop_note = (
+        await session.execute(select(UserNote.note).where(UserNote.company_id == drop_id))
+    ).first()
+    if drop_note is None:
+        return False, None
+    keep_note = (
+        await session.execute(
+            select(UserNote.company_id).where(
+                UserNote.company_id == keep_id,
+                or_(
+                    UserNote.status != enums.TrackingStatus.NONE,
+                    UserNote.rating.is_not(None),
+                    UserNote.note.is_not(None),
+                ),
+            )
+        )
+    ).first()
+    if keep_note is not None:
+        return False, drop_note.note
+    # The survivor's row, if it has one at all, is the blank stub described above; it has to go
+    # before the UPDATE below, which would otherwise collide with it on the primary key.
+    await session.execute(delete(UserNote).where(UserNote.company_id == keep_id))
+    await session.execute(
+        update(UserNote)
+        .where(UserNote.company_id == drop_id)
+        .values(company_id=keep_id, updated_at=now)
+    )
+    return True, None
+
+
+async def _repoint_merge_candidates(session: AsyncSession, *, keep_id: int, drop_id: int) -> int:
+    """Point every *other* unresolved pair at the survivor instead of the discarded company.
+
+    Shape — one ``UPDATE`` that recomputes both columns from the pair's *other* side::
+
+        UPDATE merge_candidates
+           SET company_id_a = least(:keep, other), company_id_b = greatest(:keep, other)
+         WHERE (company_id_a = :drop OR company_id_b = :drop)
+           AND company_id_a <> :keep AND company_id_b <> :keep
+           AND resolved_at IS NULL
+           AND NOT EXISTS (a row already holding that normalized pair)
+
+    where ``other`` is the end of the pair that is not the discarded company. The
+    ``least``/``greatest`` is what preserves the table's invariant that ``company_id_a <
+    company_id_b`` (the pipeline writes pairs that way, and the unique constraint is on the
+    ordered pair, so an un-normalized row would let the same pair be stored twice).
+
+    Each of the other three clauses drops a row on purpose, and all three die with the company
+    delete's cascade rather than moving:
+
+    * The two ``<> :keep`` clauses skip the pair currently under review — and any other pair
+      naming both companies — because repointing it would make it a self-pair.
+    * ``resolved_at IS NULL`` keeps a *reviewed* pair from being carried over. A reviewer who
+      marked ``(drop, third)`` "not a duplicate" said that about the discarded company; moving
+      the verdict onto the survivor would assert something nobody decided, and it would stick
+      for ever, because ``ingest.pipeline``'s candidate upsert refreshes a row only
+      ``WHERE resolved_at IS NULL``. The pipeline is free to raise ``(keep, third)`` again on
+      its own evidence, which is the honest outcome.
+    * ``NOT EXISTS`` skips a pair the survivor already holds with the same third company, which
+      would otherwise violate the unique constraint. Note the asymmetry this leaves: if that
+      existing row is *resolved*, an unresolved suspicion about the discarded company is
+      swallowed by the older verdict. That is the deliberate side of the trade — SPEC §8's
+      "a reviewed pair must never be offered again" wins over re-raising it — and the constraint
+      is on the pair regardless of resolution, so there is no third option that keeps both rows.
+    """
+    other = case(
+        (MergeCandidate.company_id_a == drop_id, MergeCandidate.company_id_b),
+        else_=MergeCandidate.company_id_a,
+    )
+    lower, upper = func.least(keep_id, other), func.greatest(keep_id, other)
+    existing = aliased(MergeCandidate, name="existing_pair")
+    duplicate = (
+        select(existing.id)
+        .where(existing.company_id_a == lower, existing.company_id_b == upper)
+        .correlate(MergeCandidate)
+        .exists()
+    )
+    return await _execute_rowcount(
+        session,
+        update(MergeCandidate)
+        .where(
+            or_(
+                MergeCandidate.company_id_a == drop_id,
+                MergeCandidate.company_id_b == drop_id,
+            ),
+            MergeCandidate.company_id_a != keep_id,
+            MergeCandidate.company_id_b != keep_id,
+            MergeCandidate.resolved_at.is_(None),
+            ~duplicate,
+        )
+        .values(company_id_a=lower, company_id_b=upper),
+    )

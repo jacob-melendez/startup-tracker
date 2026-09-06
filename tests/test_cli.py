@@ -378,6 +378,26 @@ def test_invalid_settings_fail_every_subcommand_including_migrate(
     assert upgrades == []
 
 
+def test_a_rejected_database_url_never_reaches_stderr_with_its_password(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one-line settings error is printed to a terminal, a log aggregator and bug reports.
+
+    A libpq URL that merely lacks ``+asyncpg`` is the most likely thing to be rejected here and
+    is normally a live credential, so the message names the scheme and stops there.
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgresql://tracker:hunter2@db.internal:5432/prod")
+    get_settings.cache_clear()
+
+    result = invoke(runner, "stats")
+
+    assert result.exit_code == 1
+    assert "DATABASE_URL must start with 'postgresql+asyncpg://'" in result.output
+    assert "got 'postgresql://'" in result.output
+    assert "hunter2" not in result.output
+    assert "db.internal" not in result.output
+
+
 # ------------------------------------------------------------------ a successful refresh
 
 

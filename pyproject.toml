@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 # Runtime dependencies (SPEC §3). The five web ones (fastapi, jinja2, uvicorn,
 # python-multipart for the note/bookmark form posts, apscheduler as the cron parser behind the
-# /runs staleness check) landed with Phase 4; the scheduler service itself arrives in Phase 6.
+# /runs staleness check) landed with Phase 4. Phase 6 gave apscheduler its other job: the
+# `scheduler` Compose service (scheduler.py) fires the cron expressions in
+# config/connectors.yaml that /runs only measures against, so both read the same parser.
 dependencies = [
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
@@ -79,6 +81,7 @@ files = [
     "ingest",
     "web",
     "cli.py",
+    "scheduler.py",
     "migrations/env.py",
     "settings.py",
     "logging_config.py",

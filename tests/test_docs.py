@@ -10,6 +10,7 @@ the config actually configures.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -17,15 +18,22 @@ from typer.core import TyperGroup
 from typer.main import get_command
 
 import cli
-from db import enums
+from db import enums, queries
 from ingest.base import CompanyTarget
-from ingest.config import load_connectors_config
+from ingest.config import UNIMPLEMENTED_CONNECTORS, load_connectors_config
 from ingest.connectors import all_connectors
 from ingest.seed import SeedConnector
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "docs" / "SOURCES.md"
 SPEC = ROOT / "docs" / "SPEC.md"
+README = ROOT / "README.md"
+#: The em-dash the README's cadence column uses for an on-demand connector.
+EM_DASH = "—"
+#: A row of the README's scheduling table: "| `greenhouse` | `0 6 * * *` | daily 06:00 |".
+_README_CADENCE_ROW = re.compile(
+    r"^\|\s*`(?P<connector>[a-z_]+)`\s*\|\s*(?:`(?P<cadence>[^`]+)`|—)\s*\|"
+)
 #: SPEC §11's repository tree names ``cli.py``'s commands in a trailing comment:
 #: "├── cli.py   # typer: migrate, seed, refresh, stats, merge-review".
 _SPEC_CLI_COMMANDS = re.compile(r"cli\.py\s+#\s*typer:\s*(?P<commands>.+)$", re.MULTILINE)
@@ -90,6 +98,22 @@ def test_the_unimplemented_connectors_are_marked_as_such() -> None:
         set(load_connectors_config().connectors) - set(all_connectors()) - {SeedConnector.name}
     ):
         assert "not implemented" in sections()[name].lower(), name
+
+
+def test_the_unimplemented_connector_list_is_the_one_the_registry_implies() -> None:
+    """:data:`ingest.config.UNIMPLEMENTED_CONNECTORS` is the set ``/runs`` and ``cli.py stats``
+    both mark, and it is written out rather than derived.
+
+    It has to be: nothing under ``web/`` may import a connector module (SPEC §2, CLAUDE.md), and
+    the registry is the wrong question anyway — ``seed`` is implemented yet deliberately absent
+    from it. Written out means it can drift from the YAML and from the code, so the drift is a
+    test failure: adding a connector block, or implementing one of these two, fails here until
+    the list is updated.
+    """
+    derived = (
+        set(load_connectors_config().connectors) - set(all_connectors()) - {SeedConnector.name}
+    )
+    assert set(UNIMPLEMENTED_CONNECTORS) == derived
 
 
 def test_the_excluded_sources_are_named() -> None:
@@ -200,6 +224,180 @@ def test_cli_py_reconciles_its_command_set_with_the_spec_section_it_cites() -> N
         )
     for deferred in sorted(specified - registered):
         assert deferred in doc, f"SPEC §11 names {deferred!r}; cli.py must say when it arrives"
+
+
+# ------------------------------------------- README claims about the schedule (SPEC §7.2)
+
+
+def readme_cadences() -> dict[str, str | None]:
+    """The README's scheduling table as ``connector -> cadence``; ``None`` for an em-dash.
+
+    The table is written by hand because it carries a plain-English "when it fires" column a
+    generator could not produce, so this parses it back and the test below compares it with
+    ``config/connectors.yaml``. Without that, the one document a new operator reads to learn
+    when things run could quietly disagree with the file that decides.
+    """
+    found: dict[str, str | None] = {}
+    for line in README.read_text(encoding="utf-8").splitlines():
+        match = _README_CADENCE_ROW.match(line)
+        if match is not None:
+            cadence = match.group("cadence")
+            found[match.group("connector")] = cadence if cadence != EM_DASH else None
+    return found
+
+
+def test_the_readme_cadence_table_is_the_configured_one() -> None:
+    """SPEC §7.2 and CLAUDE.md: ``config/connectors.yaml`` is the only place a schedule is
+    defined, so every other statement of the schedule has to be checked against it."""
+    assert readme_cadences() == {
+        name: config.cadence for name, config in load_connectors_config().connectors.items()
+    }
+
+
+def test_the_readme_writes_every_weekday_cadence_as_a_name() -> None:
+    """APScheduler 3.x numbers weekdays Monday=0 while crontab numbers them Sunday=0, so a
+    numeric weekday in ``config/connectors.yaml`` fires a day away from what SPEC §7.2's table
+    says — ``0 3 * * 6`` means Sunday to the parser and Saturday to everyone else.
+
+    Day names mean the same thing under either convention. This asserts the property on the
+    config (the thing that runs) and on the README (the thing that is read), so neither can
+    drift back to a number without the reason being re-litigated.
+    """
+    for name, config in load_connectors_config().connectors.items():
+        if config.cadence is None:
+            continue
+        weekday = config.cadence.split()[4]
+        assert weekday == "*" or not weekday.isdigit(), (
+            f"{name}: cadence {config.cadence!r} uses a numeric weekday; write it as a name "
+            "(mon..sun) — APScheduler numbers Monday=0, crontab numbers Sunday=0"
+        )
+
+
+def test_the_readme_documents_both_runs_signals_and_their_asymmetry() -> None:
+    """``last_successful_runs`` counts ``ok`` alone while a ``partial`` run breaks a failure
+    streak, so ``/runs`` can honestly show "last ok 9d ago" beside "0 consecutive failures".
+
+    A reader who meets that pair with no explanation concludes the page is broken, so the
+    README has to name both signals and say why they disagree (SPEC §7.2, §9).
+    """
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    assert "**Stale**" in text and "**Failing**" in text
+    assert "twice the connector's cadence" in text
+    assert "3 or more *finished* runs all ended `error`" in text
+    assert "partial" in text and "limping" in text
+
+
+def permanently_stale_connectors() -> set[str]:
+    """Connectors ``/runs`` marks **Stale** for ever, however healthy the install.
+
+    ``web.routes.runs.connector_health`` derives staleness from the cadence alone, and
+    ``last_successful_runs`` counts ``ok`` runs. A connector configured with a cadence but
+    absent from ``all_connectors()`` is scheduled by nothing (``scheduler.build_scheduler``
+    skips it) and refused by ``cli.py refresh`` ("unknown connector"), so no code path can ever
+    write it an ``ok`` row and the Stale mark can never clear.
+    """
+    implemented = set(all_connectors()) | {SeedConnector.name}
+    return {
+        name
+        for name, config in load_connectors_config().connectors.items()
+        if config.cadence is not None and name not in implemented
+    }
+
+
+def test_the_readme_first_run_check_is_one_a_healthy_install_can_pass() -> None:
+    """The setup walkthrough's last paragraph is the acceptance test a first-time operator uses
+    to decide whether ``make up && make migrate && make seed && make refresh`` worked, and it
+    said "no row marked **Stale**" while ``product_hunt`` — cadenced by SPEC §7.2, implemented
+    by nobody — is Stale on every install there has ever been.
+
+    An unpassable check trains the reader to ignore the one signal SPEC §9 exists to make loud,
+    so the claim has to name its exceptions. Asserted against the config rather than against a
+    memory of it: implement ``product_hunt`` and this test goes quiet on its own.
+    """
+    collapsed = " ".join(README.read_text(encoding="utf-8").split())
+    stale = permanently_stale_connectors()
+    if not stale:
+        pytest.skip("every cadenced connector is implemented; the plain claim is true again")
+
+    assert "no row marked **Stale**" not in collapsed, (
+        f"the first-run check promises no Stale row, but {sorted(stale)} always is"
+    )
+    marker = "permanently **Stale**"
+    index = collapsed.find(marker)
+    assert index != -1, f"the README has to say {sorted(stale)} is {marker}"
+    # The sentence leading up to the marker, generously bounded: it must name the connectors.
+    lead = collapsed[max(0, index - 400) : index]
+    for name in sorted(stale):
+        assert f"`{name}`" in lead, f"{name} is permanently Stale and the README does not say so"
+
+
+#: The first line of the README's ``merge-review`` sample block, which ``cli.format_candidate``
+#: composes: "candidate #1  similarity 0.91  <reason>".
+_README_CANDIDATE_HEADER = re.compile(
+    r"^candidate #(?P<id>\d+)  similarity (?P<similarity>\d\.\d\d)  (?P<reason>.+)$", re.MULTILINE
+)
+#: The ``merge_candidates.reason`` text ``ingest.normalize.record_merge_candidates`` writes for a
+#: trigram pair (SPEC §8 step 3). ``ingest.pipeline``'s domain-conflict row is the only other
+#: reason string in the system, and it is not what this sample illustrates.
+_TRIGRAM_REASON = re.compile(
+    r"trigram similarity \d\.\d\d on normalized_name within metro (?:'[^']*'|None)"
+)
+
+
+def test_the_readme_merge_review_sample_is_output_the_code_can_produce() -> None:
+    """The sample block is the only documented example of what a destructive, human-in-the-loop
+    command shows a reviewer, and it printed a ``reason`` no code path writes — one implying the
+    column names both companies, where the real one repeats the similarity and names the metro.
+
+    So: parse the header out of the README, check the reason against the shape
+    ``record_merge_candidates`` stores, and render the parsed values back through
+    ``cli.format_candidate`` — which is where the line is actually composed — and compare.
+    """
+    text = README.read_text(encoding="utf-8")
+    match = _README_CANDIDATE_HEADER.search(text)
+    assert match is not None, "the README no longer shows a merge-review candidate"
+    assert _TRIGRAM_REASON.fullmatch(match["reason"]), (
+        f"no connector writes a merge_candidates.reason like {match['reason']!r}"
+    )
+
+    moment = datetime(2026, 9, 5, 6, tzinfo=UTC)
+
+    def side(company_id: int, name: str) -> queries.CompanySummary:
+        return queries.CompanySummary(
+            id=company_id,
+            name=name,
+            domain=None,
+            city=None,
+            stage=enums.Stage.UNKNOWN,
+            status=enums.CompanyStatus.ACTIVE,
+            open_job_count=0,
+            funding_round_count=0,
+            contact_count=0,
+            first_seen_at=moment,
+            last_seen_at=moment,
+            connectors=(),
+        )
+
+    row = queries.MergeCandidateRow(
+        id=int(match["id"]),
+        similarity=float(match["similarity"]),
+        reason=match["reason"],
+        a=side(2, "Acme Robotics"),
+        b=side(5, "Acme Robotics Inc"),
+    )
+    assert cli.format_candidate(row, suggested_id=row.a.id)[0] == match[0]
+
+
+def test_the_readme_names_the_two_new_commands_with_what_they_are_for() -> None:
+    """Both are registered and both are documented, so the "Operations" section cannot outlive
+    a rename or arrive before the command does."""
+    text = README.read_text(encoding="utf-8")
+    for command in ("stats", "merge-review"):
+        assert command in registered_cli_commands()
+        assert f"`python cli.py {command}`" in text
+    # Whitespace collapsed: the claim must survive a reflow of the paragraph it sits in.
+    collapsed = " ".join(text.split())
+    assert "the only thing in the system that deletes a company" in collapsed
 
 
 def test_the_document_does_not_claim_an_unchanged_site_rewrites_nothing() -> None:

@@ -878,6 +878,29 @@ class ContactSyncResult:
         return self.added + self.removed
 
 
+async def reconcile_constructed_contacts(
+    session: AsyncSession, company_id: int
+) -> ConstructedContactChanges:
+    """Reconcile one company's SPEC §6 constructed links — the public form of the rule the
+    ingest path applies on every upsert.
+
+    ``cli.py merge-review`` is the caller. A merge changes exactly the two inputs these links
+    are derived from: it fills the survivor's ``domain`` when the survivor had none, and it
+    moves the discarded company's contacts across — including the people search built from
+    *that* company's name, which is now a second, wrong search link on a company that already
+    has its own. Left alone, the survivor ends a merge showing two people-search links, one of
+    them for a name that no longer exists in the database, and with no ``linkedin_company`` link
+    at all despite the domain it has just acquired. Both are exactly the drift
+    :func:`_ensure_constructed_contacts` is written to remove, so the merge runs it rather than
+    waiting for the next upsert or the next ``cli.py sync-contacts`` sweep.
+
+    Runs in the caller's transaction and commits nothing, like every other step of a merge. It
+    takes the same ``SELECT ... FOR UPDATE`` on the company; ``merge_companies`` already holds
+    that lock, so within a merge it costs nothing.
+    """
+    return await _ensure_constructed_contacts(session, company_id)
+
+
 #: Companies per keyset page in :func:`sync_constructed_contacts` — the size of one ``SELECT
 #: id`` round trip, *not* of a transaction: every company is committed on its own, so that the
 #: row lock the reconciliation takes ends with it. Large enough that a 3 000-company database

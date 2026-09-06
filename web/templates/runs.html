@@ -5,6 +5,9 @@
   status, counts, error text. Highlight any connector with no successful run in over 2× its
   cadence. Makes silent breakage visible."
 
+  Above them both, when and only when something is failing, sits SPEC §7.2's banner: "a
+  connector that fails 3 consecutive runs should ... surface prominently on /runs".
+
   Two blocks, and the first is the point of the page. Every *configured* connector is listed
   (from `config/connectors.yaml`, the only place a cadence is defined), including ones that
   have never run and ones not implemented yet — a connector that quietly stopped producing
@@ -16,10 +19,33 @@
 {% block content %}
   <h1>Ingestion health</h1>
 
+  {#- SPEC §7.2: "a connector that fails 3 consecutive runs should log at ERROR and surface
+      prominently on /runs". The ERROR line is the scheduler's; this banner is the prominent
+      half. It sits above the health list because a reader who has to find the red row among
+      eleven has not been told anything loudly, and it names every failing connector with its
+      streak so the page answers "what broke, and how long ago" without a scroll.
+      `role="status"` exposes it as a status in the accessibility tree. It buys no announcement
+      here: a live region announces *changes* to itself, `/runs` is a plain document load (the
+      nav is `<a href>`, and this page carries no HTMX), and this banner never changes after
+      first paint — so it is met in normal reading order, directly under the page heading. -#}
+  {%- if failing %}
+  {#- The whitespace control keeps the whole sentence on one rendered line: it is read as one
+      sentence, and a newline in the middle of "connectors have failed" would make it awkward
+      to match, to quote in a bug report, or to copy out of the page. -#}
+  {%- set n = failing | length %}
+  <p class="alert" role="status">
+    {{ n }} connector{{ 's' if n != 1 else '' }} {{ 'have' if n != 1 else 'has' }} failed
+    {{- ' ' }}{{ failure_threshold }} or more consecutive runs:
+    {%- for row in failing %} {{ row.connector }} ({{ row.consecutive_failures }})
+      {%- if not loop.last %},{% endif %}
+    {%- endfor %}.
+  </p>
+  {%- endif %}
+
   <div class="runs">
     {%- if health %}
     {%- for row in health %}
-    <div class="run-row{% if row.stale %} stale{% endif %}">
+    <div class="run-row{% if row.stale %} stale{% endif %}{% if row.failing %} failing{% endif %}">
       <span>{{ row.connector }}</span>
       <span class="muted">
         {%- if row.cadence %}<code>{{ row.cadence }}</code>
@@ -28,9 +54,12 @@
       <span>
         {%- if row.last_ok %}last ok {{ row.last_ok | ago }}
         {%- else %}<span class="muted">never succeeded</span>{% endif %}</span>
-      {#- The §9 highlight. The row class carries the styling; the word carries the meaning
-          for anyone reading with styles off or with a screen reader. #}
+      {#- The §9 and §7.2 highlights. The row class carries the styling; the word carries the
+          meaning for anyone reading with styles off or with a screen reader. A row can be both
+          — silence for two cadences *and* a live failure streak — so neither hides the other. #}
       {% if row.stale %}<strong>Stale</strong>{% endif %}
+      {% if row.failing %}<strong class="fail">Failing</strong>
+      <span class="muted">{{ row.consecutive_failures }} consecutive errors</span>{% endif %}
       {% if not row.enabled %}<span class="muted">disabled</span>{% endif %}
       {% if not row.implemented %}<span class="muted">not implemented</span>{% endif %}
     </div>
@@ -65,8 +94,17 @@
           <td>
             {%- if run.finished_at %}{{ (run.started_at, run.finished_at) | duration }}
             {%- else %}<span class="muted">&mdash;</span>{% endif %}</td>
-          {#- The enum's value doubles as the modifier class: ok / partial / error. -#}
-          <td><span class="status {{ run.status }}">{{ run.status | label }}</span></td>
+          {#- The enum's value doubles as the modifier class: ok / partial / error.
+              Guarded on `finished_at` like the two cells above, and for the same reason:
+              `FetchRun.status` defaults to `error` and the row is committed *before* the fetch
+              starts (`ingest.pipeline._start_run`), so an unfinished run reads `error` while
+              its outcome is simply not known yet. Rendering that default as "Error" would
+              label a healthy hour-long run a failure for its whole duration, and would
+              contradict the health block above, which excludes unfinished runs from the streak
+              (`db.queries.consecutive_failure_counts`) on exactly this grounds. -#}
+          <td>
+            {%- if run.finished_at %}<span class="status {{ run.status }}">{{ run.status | label }}</span>
+            {%- else %}<span class="muted">Running</span>{% endif %}</td>
           <td>{{ run.n_fetched }}</td>
           <td>{{ run.n_upserted }}</td>
           <td>

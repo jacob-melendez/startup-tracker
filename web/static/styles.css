@@ -144,6 +144,13 @@ table.roles th, table.roles td, table.funding th, table.funding td, .runs th, .r
    "this connector is stale" both survive colour-blindness. */
 tr.match, .run-row.stale { font-weight: 600; background: var(--match-bg); }
 tr.match > td:first-child, .run-row.stale { box-shadow: inset 3px 0 0 var(--match); }
+/* Failing (SPEC §7.2: three consecutive error runs) is the louder signal, so it takes --err and
+   wins the left bar on a row that is also stale — same specificity, declared later. The word
+   "Failing" in the row is what carries it without colour; .alert is the banner above the list. */
+.run-row.failing { font-weight: 600; box-shadow: inset 3px 0 0 var(--err); }
+.run-row .fail { color: var(--err); }
+.alert { margin: 0 0 10px; padding: 6px 10px; background: var(--match-bg);
+  box-shadow: inset 3px 0 0 var(--err); border-radius: 4px; }
 .runs code { font-family: var(--mono); }
 .runs pre { max-width: 70ch; margin: 0; font: 12px/1.4 var(--mono); white-space: pre-wrap; }
 .status.ok, .status.partial, .status.error { font-family: var(--mono); font-weight: 600; }
