@@ -42,7 +42,7 @@ from db.models import (
 )
 from db.queries import refresh_company_denormalized_columns
 from ingest.base import CompanyRecord, Connector, FetchContext
-from ingest.config import ConnectorConfig, load_regions_config
+from ingest.config import ConnectorConfig, RegionsConfig, load_regions_config
 from ingest.contacts import people_search_url
 from ingest.http import HttpClient, MemoryCache
 from ingest.normalize import TRIGRAM_THRESHOLD, normalize_name
@@ -68,7 +68,11 @@ REGIONS = load_regions_config()
 
 SF: dict[str, Any] = {"city": "San Francisco", "state": "CA", "is_hq": True}
 PALO_ALTO: dict[str, Any] = {"city": "Palo Alto", "state": "CA"}
-AUSTIN: dict[str, Any] = {"city": "Austin", "state": "TX"}  # not in config/regions.yaml
+#: A city no region in ``config/regions.yaml`` claims — the case ``_fill_metros`` drops. Which
+#: city that is depends on the file, so the test asserts it instead of trusting this comment:
+#: §12 Phase 7 took the config from one metro to six and the city this constant used to name
+#: became a configured one, which would have left the test passing while testing nothing.
+UNCONFIGURED: dict[str, Any] = {"city": "Chicago", "state": "IL"}
 
 # ``similarity('applied intuition system', 'applied intuition systems')`` on pg_trgm 1.6
 # (see tests/test_normalize.py).
@@ -968,12 +972,20 @@ async def test_trigram_near_duplicate_is_recorded_not_merged(
 async def test_metro_less_location_is_skipped_and_run_stays_ok(
     session_factory: SessionFactory, http: HttpClient
 ) -> None:
+    """SPEC §1: nothing outside the configured regions is stored. The record itself still lands
+    — a company is not lost because one of its offices is somewhere the config does not list —
+    and the run stays ``ok``, because a national source naming out-of-region cities is the
+    normal case, not trouble worth a ``partial``."""
+    assert REGIONS.lookup(UNCONFIGURED["city"], UNCONFIGURED["state"]) is None, (
+        "this test needs a city no configured region claims; config/regions.yaml now claims "
+        f"{UNCONFIGURED['city']}"
+    )
     fetch_run, _ = await run(
         session_factory,
         http,
         [
-            item(locations=[AUSTIN, SF]),
-            item(name="Nowhere Labs", external_id="nowhere", locations=[AUSTIN]),
+            item(locations=[UNCONFIGURED, SF]),
+            item(name="Nowhere Labs", external_id="nowhere", locations=[UNCONFIGURED]),
         ],
     )
 
@@ -1015,6 +1027,81 @@ async def test_configured_city_always_takes_the_configured_metro(session: AsyncS
     assert await count(session, Company) == 1
     (location,) = (await session.execute(select(Location))).scalars().all()
     assert (location.city, location.state, location.metro) == ("San Francisco", "CA", BAY_AREA)
+
+
+#: A city that exists nowhere but in the region file handed to the test. Invented on purpose:
+#: no code path can know where ``Rivermouth`` is from geography, a fixture or a shipped config,
+#: so whatever metro the row ends up with came from the configuration under test and from
+#: nothing else.
+RIVERMOUTH: dict[str, Any] = {"city": "Rivermouth", "state": "ZZ", "is_hq": True}
+
+
+def one_city_regions(metro: str, *, country: str = "US") -> RegionsConfig:
+    """A region config holding :data:`RIVERMOUTH` alone, filed under ``metro``.
+
+    Built in memory rather than written to YAML because ``load_regions_config`` caches on the
+    path: two files describing the same city under different metros would need two paths, and a
+    reader would have to check that they really do differ in the one field that matters.
+    """
+    return RegionsConfig.model_validate(
+        {
+            "regions": [
+                {
+                    "metro": metro,
+                    "state": RIVERMOUTH["state"],
+                    "country": country,
+                    "cities": [RIVERMOUTH["city"]],
+                }
+            ]
+        }
+    )
+
+
+async def test_a_city_reassigned_in_the_config_is_relabelled_on_the_next_ingest(
+    session: AsyncSession,
+) -> None:
+    """SPEC §11, §12 Phase 7: ``config/regions.yaml`` is the only place region logic may live,
+    so where the file and a stored row disagree the file wins.
+
+    ``_upsert_locations`` used to say ``ON CONFLICT DO NOTHING``, which made the metro a city
+    was *first* ingested with the metro it kept for ever. The region logic then lived in the
+    ``locations`` table — a row nobody can edit by editing YAML — and moving a city between
+    metros, or renaming one, changed only what future cities were labelled. ``DO UPDATE`` is
+    what makes the config authoritative over data already stored.
+
+    ``country`` moves with it. The second config also spells the country differently — which is
+    what correcting a region's ``country:`` looks like, not a city changing continents — because
+    the same conflict clause writes both columns and a test watching only ``metro`` would still
+    pass with ``country`` dropped from the ``SET``.
+
+    ``populate_existing`` on the re-read because the location is written with a Core
+    ``INSERT ... ON CONFLICT``: the row is already in the session's identity map with its old
+    metro, and the ORM would hand that copy back rather than what Postgres now holds.
+    """
+    record = make_record(locations=[RIVERMOUTH])
+    first = await upsert_company_record(
+        session, record, "hn_hiring", now=NOW, regions=one_city_regions("Old Metro", country="USA")
+    )
+    (before,) = (await session.execute(select(Location))).scalars().all()
+    assert (before.city, before.state, before.metro, before.country) == (
+        "Rivermouth",
+        "ZZ",
+        "Old Metro",
+        "USA",
+    )
+
+    second = await upsert_company_record(
+        session, record, "hn_hiring", now=NOW + DAY, regions=one_city_regions("New Metro")
+    )
+
+    assert second.company_id == first.company_id
+    stmt = select(Location).execution_options(populate_existing=True)
+    (after,) = (await session.execute(stmt)).scalars().all()
+    # The same row, relabelled — not a second ``locations`` row for one city, which
+    # ``uq_locations_city_state`` forbids anyway, and not a stale label kept beside the config.
+    assert after.id == before.id
+    assert (after.metro, after.country) == ("New Metro", "US")
+    assert await count(session, CompanyLocation) == 1
 
 
 async def test_child_rows_are_persisted_and_idempotent(

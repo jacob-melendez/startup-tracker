@@ -39,7 +39,7 @@ from db.session import dispose_engine, get_session_factory
 from logging_config import configure_logging, get_logger
 from settings import get_settings
 from web.routes import companies, roles, runs
-from web.templating import templates
+from web.templating import site_name, templates
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -70,7 +70,9 @@ def create_app(session_factory: async_sessionmaker[AsyncSession] | None = None) 
                 await dispose_engine()
 
     app = FastAPI(
-        title="Bay Area startup tracker",
+        # The same name the pages carry, from the same source: `config/regions.yaml` is the
+        # only place a metro may be named (SPEC §12 Phase 7), and this title used to name one.
+        title=site_name(),
         description="Locally-run browser over the ingested company and role database (SPEC §9).",
         lifespan=lifespan,
         # No generated API surface. SPEC §1 lists none for v1, and FastAPI's stock docs pages

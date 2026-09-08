@@ -38,7 +38,8 @@ is public record and free to use.
 The search API ignores its own `locationCode`/`locationType` parameters (verified while
 recording `tests/fixtures/sec_edgar/`), so the connector runs one phrase query per city in
 `config/regions.yaml` and negates the excluded industry groups in the query (`-"…"` becomes a
-`must_not` clause).
+`must_not` clause). **This is the one connector whose cost grows with the region list** — see
+"Query volume" under Known limitations below before adding a metro.
 
 ### Terms and rate limit
 
@@ -79,9 +80,13 @@ From `primary_doc.xml` (`ingest/connectors/sec_edgar.py::parse_form_d`):
 
 * **Pooled investment funds** (`industryGroupType` in `exclude_industry_groups`): venture
   funds file Form D too, but they are the investors, not startups.
-* **Issuers outside the configured region**: the phrase search matches the whole document,
-  so a hit may come from a *director's* address (Lovable Labs, Boston, matched "Palo Alto");
-  the issuer address in the XML is checked again and non-region issuers are dropped.
+* **Issuers outside every enabled region**: the phrase search matches the whole document, so a
+  hit may come from a *director's* address rather than the issuer's — the recorded fixture has
+  Lovable Labs of Boston coming back for the phrase "Palo Alto", which was a false positive when
+  the Bay Area was the only configured metro and is an in-region company now that Boston is one.
+  Either way the issuer address in the XML is checked against the config again, and an issuer no
+  enabled region claims is dropped. Which hits are false positives is therefore a property of
+  `config/regions.yaml`, not of the connector.
 * **TEST filings** (`testOrLive != LIVE`).
 * Search hits whose `biz_locations` resolve to no configured city are not even fetched.
 
@@ -101,6 +106,16 @@ run ends `partial` rather than failing (SPEC §7.2).
   `{"value": 10000, "relation": "gte"}` when there are more), so the connector searches in
   `search_window_days` (30-day) windows per city; a window that still overflows is reported as
   a problem and hits past the cap are not fetched.
+* **Query volume scales with the configured city count — and nothing else in the system does.**
+  One phrase query per city per window, so a first run's 18-month backfill is about 19 windows
+  times however many cities `config/regions.yaml` enables: 342 searches for the Bay Area's 18
+  cities alone, 912 for all 48 across the six shipped metros. The 8 requests/second we cap
+  ourselves at (SPEC §4 allows 10) is what turns that count into wall-clock time, so enabling
+  another metro lengthens this connector's runs in direct proportion while leaving every other
+  connector's untouched — the rest read a national index or one company's board whatever the
+  region list says. Each city also brings whatever per-hit XML fetches its matches generate
+  (below), which is why the shipped city lists are deliberately tight rather than administratively
+  complete.
 * EFTS returns hits in **relevance-score order**, not by date — the recorded "San Francisco"
   page lists a D/A ahead of its own original Form D. Because an amendment shares the original's
   file number (one round, updated in place), the connector sorts every window's hits by filing
@@ -174,7 +189,27 @@ than reporting an empty directory.
   raised, and leaving `Company.stage` unset lets `sec_edgar` (which outranks this connector,
   SPEC §8) fill it from a real Form D.
 * Companies whose `all_locations` names no configured city — including `Remote` — are counted
-  and dropped: the index is national and this project is regional (SPEC §1).
+  and dropped: the index is national and this project ingests only the metros
+  `config/regions.yaml` enables (SPEC §1). The query cost does not change with that list — the
+  index is walked by YC batch either way — only how much of the result survives the filter.
+* That city match is **exact on `(city, state)`**, and YC's spelling is not always the config's:
+  the directory files companies under `"New York City, NY, USA"` far more often than under
+  `"New York, NY"`. The match is exact against *every* spelling `config/regions.yaml` gives a
+  city — its canonical `name` and each of its `aliases` — and resolves to the configured entry
+  either way, so an alias is what matches YC's string while the canonical name is what reaches
+  the database (`uq_locations_city_state`: one row per real place, named by the config). Nothing
+  is loosened and nothing is guessed. A substring or fuzzy match would make every containing name
+  ambiguous instead, which is the failure `hn_hiring` has to rank its way out of below.
+* **The alias list is measured against this directory, not imagined.** All 6204 entries were
+  counted on 2026-09-08. 713 give their location as `New York City, NY` against 195 as
+  `New York, NY`, so before the alias existed this connector dropped 713 of the 908 companies
+  that name that city — 79% of them — for their spelling alone; it was the largest single data
+  defect in the six-metro config. 3113 give `San Francisco, CA`, which is already the configured
+  spelling, so that city's alias is earned on Hacker News (below) rather than here. And the same
+  count is why no two-letter form is configured anywhere: 189 entries give `Los Angeles, CA`,
+  while 31 give `LA, Nigeria` — Lagos State, not a nickname for a California metro. An alias is a
+  claim about how a source actually spells a place, so it is added from a count of that source
+  and from nothing else, and the count that earned it sits beside it in `config/regions.yaml`.
 
 ---
 
@@ -281,8 +316,9 @@ be read — including the contact addresses they put in them (SPEC §6).
 
 The convention is a pipe-separated header line, `COMPANY | ROLE | LOCATION | Full-time | REMOTE
 | URL`. Fields appear in any order, so each is classified by what it looks like: a field that
-resolves to a city in `config/regions.yaml` is the location, one the employment-type keywords
-recognise is the commitment, one that is a URL is the link, and the first field is the company.
+resolves to a city in `config/regions.yaml` — by its configured name or by one of its `aliases` —
+is the location, one the employment-type keywords recognise is the commitment, one that is a URL
+is the link, and the first field is the company.
 A comment with no pipes falls back to its leading proper name ("SwingVision is the AI tennis
 app…"). One `Job` per comment (`external_id` = the HN item id, `posted_at` = the comment time),
 plus one per `- Role: https://…` bullet, which is how multi-role comments are written. An email
@@ -294,7 +330,67 @@ through, so one address cannot become two rows for the same company (SPEC §6).
 
 * Only comments naming a configured city are kept — from the header's location field where
   there is one, otherwise from anywhere in the body, and the choice is logged either way. A
-  passing mention of a Bay Area city in an out-of-region post will occasionally slip through.
+  passing mention of a configured city in an out-of-region post will occasionally slip through.
+* **Posters abbreviate, so every spelling the config records is looked for** — a city's canonical
+  name and each of its `aliases` — and whichever matched resolves to the same configured entry,
+  so the alias matches the comment while the canonical name is what is stored. It pays here more
+  than anywhere else, because a comment is prose rather than a form field. Of the 273 comments in
+  the September 2026 thread, 53 named a configured city and 220 were dropped for naming none; 22
+  of those dropped comments write `NYC` as a whole word ("Lucia | Director of Corp Dev … | Remote
+  (NYC / SEA / global overlap)") and 16 write `SF` ("Uncountable | NY, SF, London and Toronto
+  (In-Person) | Full-Stack Engineering"). They were dropped for their spelling and for nothing
+  else, which is the whole argument for the key — and equally the argument against inventing
+  entries for it: an alias earns its line by being counted in a source, and the count sits beside
+  it in `config/regions.yaml`.
+* **A bare city name in free text is ambiguous twice over**, and a national city list turns both
+  cases from theoretical into routine. A configured name can be a whole-word substring of a longer
+  configured name (`San Francisco` inside `South San Francisco`), and a name written on its own
+  carries no state, so it cannot say which metro is meant the day two regions hold the same city
+  name. The connector therefore does not stop at the first city it finds: every spelling of every
+  configured city occurring anywhere in the text is a candidate, ranked best-first by
+
+  1. a mention immediately followed by its own state (`", CA"`, `", California"`) beating a bare
+     one — which is what lets `Austin, TX` in the body outrank the word `Austin` in a signature;
+  2. a longer *matched spelling* beating a shorter one, so `South San Francisco` is never read as
+     `San Francisco`. It is the length of the string that was found, not of the city's canonical
+     name: an alias may be shorter or longer than the name it stands for, and ranking on canonical
+     lengths would let a city recognised by a short alias outrank one whose full name the poster
+     wrote out;
+  3. an earlier position beating a later one.
+
+  A bare mention still counts, so no recall is lost. What survives all three rules is the honest
+  residue: two bare, un-qualified city names in one comment, settled by length and then position.
+  The winner is the *configured* city, so it brings its own state and metro with it and nothing
+  is resolved from a bare name afterwards.
+* **A mention carrying somebody else's state code is thrown out rather than ranked.** The mirror
+  of rule 1, and the one place the state after a mention vetoes instead of promoting: a configured
+  name followed by a two-letter code that is not its own state is a different place that happens
+  to share the name, so it is dropped before the ranking sees it. Without that it merely failed to
+  be promoted and then won as a bare match anyway — the wrong metro, which is also the wrong scope
+  for SPEC §8's name matching. **The trigger is deliberately narrow, because the evidence for it
+  is narrow.** Two things have to hold before a pair of letters is read as a code. Both must be
+  capitalised — `", CA"` is a state, while the `", or"` of "…, or remote" and the `", we"` of
+  "…, we are hiring" are English, and vetoing on those would drop the very comments this connector
+  reads. And the pair must stand alone as a token: the pattern ends on `(?![\w-])` rather than
+  `\b`, because a hyphen satisfies a word boundary and this thread is written in all-capitals
+  vernacular, so `\b` cut `ON` out of `", ON-SITE"` and `IN` out of `", IN-PERSON"` and handed
+  them to the veto as somebody else's state code — one lost record in 742 live comments,
+  2026-09-08. The residual is the same words with a space in them: `", ON SITE"` still reads as a
+  code, and nothing short of a list of the fifty real ones could tell it from `", ON"`. No comment
+  in that sample wrote it. A code that is not a US state at all (`", UK"`) vetoes too, and should
+  — it says just as plainly that the poster meant somewhere else.
+* **A qualifier written out in prose can only promote, never veto**, and it is read from
+  `config/regions.yaml` rather than guessed. A region (or a city overriding its state) may carry
+  `state_name`, how its `state` is spelled out; `_names_state` compares the text after the comma
+  against the code and that name by equality, case- and whitespace-folded. It stays promote-only
+  because the file names the configured states and no others, so "not this city's state" spans
+  every state the config omits, every country and every capitalised word English puts after a
+  comma. What stood here before was a letter heuristic, written to keep a table of state names
+  out of a connector (SPEC §11) — and it kept the table out while getting the answer wrong,
+  promoting a *neighbouring* state's written-out name and filing a live comment's company under
+  the wrong metro. The name belongs in the same file its code does, and that is now where it is
+  read from. Omitting `state_name` costs a mention a rank and never a record, since only the
+  two-letter veto above ever discards one.
 * **A link is not taken as the company's domain when it points at a job board or document
   host** (`options.ignore_link_hosts`: Greenhouse, Lever, Ashby, Workable, Deel, Workday,
   Notion, Google Docs, LinkedIn, GitHub …). Keying a company on `app.deel.com` would merge every

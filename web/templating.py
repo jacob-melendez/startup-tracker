@@ -8,7 +8,8 @@ third-party pages (SPEC §4, Tiers 1 to 3), which makes that a real injection ve
 :func:`safe_url` exists and **every externally sourced URL goes through it** before it reaches
 an attribute.
 
-Nothing here touches the database or the network; these are pure display helpers.
+Nothing here touches the database or the network; these are pure display helpers. The one thing
+any of them reads off the disk is ``config/regions.yaml``, for :func:`site_name`.
 """
 
 from __future__ import annotations
@@ -21,6 +22,12 @@ from urllib.parse import urlencode, urlsplit
 from starlette.requests import Request
 from starlette.templating import Jinja2Templates
 
+# Importing ``ingest.config`` from ``web/`` is already established — ``web.routes.runs`` reads
+# the connector cadences through it — and it does not put a handler one import away from an
+# outbound call (SPEC §2): that module parses local YAML and nothing else. No httpx, no
+# connector, no fetch; ``tests/test_web_acceptance.py`` exempts it from FORBIDDEN_IMPORTS on
+# exactly those grounds.
+from ingest.config import load_regions_config
 from web import labels
 from web.labels import EM_DASH
 
@@ -172,7 +179,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def query_string(request: Request, **overrides: Any) -> str:
-    """This request's query string with ``overrides`` applied, e.g. ``"?city=Oakland&sort=name"``.
+    """This request's query string with ``overrides`` applied, e.g. ``"?city=<city>&sort=name"``.
 
     :func:`next_page_url` is the only caller: the "load more" URL is this request's URL with a
     new ``cursor``. Sort is deliberately *not* built here — it is a ``<select name="sort">``
@@ -182,7 +189,7 @@ def query_string(request: Request, **overrides: Any) -> str:
     current request; no template needs one yet.
 
     Rules: an override of ``None`` removes the parameter, a list or tuple expands to repeated
-    parameters (``city=Oakland&city=Berkeley``), a bool becomes ``1``/``0``, everything else is
+    parameters (``city=<one>&city=<another>``), a bool becomes ``1``/``0``, everything else is
     ``str()``. Existing parameters keep their order and their repeats; overridden ones move to
     the end.
 
@@ -226,6 +233,28 @@ def _param_value(value: object) -> str:
     return str(value)
 
 
+def site_name() -> str:
+    """The application's own name: ``"<metro> Startup Tracker"``, or ``"Startup Tracker"``.
+
+    Derived from ``config/regions.yaml`` rather than written out. SPEC §12 Phase 7 makes that
+    file the only place region-specific logic may live, and a metro name baked into the page
+    chrome is exactly the drift it forbids — with six regions configured the old title was also
+    simply wrong. One enabled region names itself, because a tracker covering a single metro
+    should say which one; two or more have no honest shared label, and inventing one ("US
+    Startup Tracker") would be a claim the config does not make.
+
+    Registered as a *callable* global rather than a precomputed string so a test can read the
+    name against an alternate region file — a value baked into ``templates.env.globals`` at
+    import time could not be swapped per case. It buys nothing at run time:
+    :func:`ingest.config.load_regions_config` is cached on its path, so the file is parsed once
+    per process and a page view costs a dict lookup rather than a YAML parse. An edit to
+    ``config/regions.yaml`` under a running server therefore does *not* change the brand or the
+    ``<title>``; a restart picks it up, exactly as it would with a constant.
+    """
+    metros = load_regions_config().metros
+    return f"{metros[0]} Startup Tracker" if len(metros) == 1 else "Startup Tracker"
+
+
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 templates.env.filters["safe_url"] = safe_url
 templates.env.filters["money"] = money
@@ -236,6 +265,9 @@ templates.env.filters["duration"] = duration
 # Kept as the extension point for a link that varies one parameter; no template needs one yet
 # (sort is a form control, pagination is built in Python — see :func:`query_string`).
 templates.env.globals["qs"] = query_string
+# The <title> and the brand, in the one place the region name is allowed to come from (§12
+# Phase 7). Called by the templates — `{{ site_name() }}` — not interpolated here.
+templates.env.globals["site_name"] = site_name
 # The filter selects need the enum vocabularies themselves, and Jinja cannot import a module.
 templates.env.globals["ROLE_FAMILY_ORDER"] = labels.ROLE_FAMILY_ORDER
 templates.env.globals["EMPLOYMENT_TYPE_ORDER"] = labels.EMPLOYMENT_TYPE_ORDER

@@ -525,6 +525,10 @@ async def test_stats_snapshot_counts_every_field_from_its_own_rows(session: Asyn
         job_bookmarks=1,
         companies_added=3,
         jobs_added=2,
+        # SPEC §12 Phase 7's rollup: the two locations above are two cities of one metro, and
+        # they belong to two different companies, so one line counting both — not two lines,
+        # and not one company.
+        companies_by_metro=(("Bay Area", 2),),
     )
 
 

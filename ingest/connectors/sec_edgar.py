@@ -14,7 +14,11 @@ How a run works
    (:data:`SEARCH_URL`) with a phrase query — the API ignores its own location filter, so the
    city name is searched as a phrase and every hit is re-checked (see the fixtures README).
    Each hit whose business address resolves to a configured city has its ``primary_doc.xml``
-   fetched from :data:`ARCHIVE_URL` and is yielded as a :class:`FormDFiling`.
+   fetched from :data:`ARCHIVE_URL` and is yielded as a :class:`FormDFiling`. That is one
+   full-text search per city per window, so a run's query count is the number of cities in
+   ``config/regions.yaml`` times the number of windows the date range splits into: adding
+   cities or regions to that file lengthens a backfill in proportion, and nothing else in this
+   project scales with the city count (``docs/SOURCES.md``).
 3. :meth:`SecEdgarConnector.to_records` parses the XML (:func:`parse_form_d`) and maps one
    filing to one :class:`~ingest.base.CompanyRecord` with a location, a sector, a funding round
    and the related persons — or skips it (test filing, pooled investment fund, issuer outside
@@ -343,8 +347,8 @@ def date_windows(start: date, end: date, days: int) -> Iterator[tuple[date, date
 
 
 def split_location(value: str) -> tuple[str, str] | None:
-    """``"San Jose, CA"`` → ``("San Jose", "CA")`` on the *last* comma; ``None`` for an entry
-    with no comma (``"Toronto"``, ``"Luxembourg"``)."""
+    """``"City, ST"`` → ``("City", "ST")`` on the *last* comma; ``None`` for an entry with no
+    comma (``"Toronto"``, ``"Luxembourg"``)."""
     city, sep, state = value.rpartition(", ")
     if not sep:
         return None
@@ -359,7 +363,7 @@ def filing_order(hit: dict[str, Any]) -> tuple[str, bool, str]:
     amendments filed the same day, then accession number (a filer's accessions are sequential).
 
     EFTS ranks hits by relevance score, so an amendment can come back ahead of its original
-    (the recorded "San Francisco" page does exactly that for file number 021-593951). The
+    (one of the recorded EFTS pages does exactly that for file number 021-593951). The
     original Form D and every D/A share the SEC file number — one round, updated in place by
     the pipeline with whatever record it sees last — so the connector must yield the original
     first or the round would keep the stale amount and payload under the amendment's notes.
@@ -413,7 +417,7 @@ class SecEdgarConnector(Connector[FormDFiling]):
 
     def search_query(self, city: str) -> str:
         """The EFTS ``q`` for one city: the city as a phrase, minus every excluded industry
-        group as a negated phrase — ``'"Palo Alto" -"Pooled Investment Fund"'``. EFTS turns
+        group as a negated phrase — ``'"<city>" -"Pooled Investment Fund"'``. EFTS turns
         ``-"..."`` into a ``must_not`` clause (fixtures README), so funds never even show up."""
         negations = "".join(f' -"{group}"' for group in self.options.exclude_industry_groups)
         return f'"{city}"{negations}'
@@ -535,10 +539,10 @@ class SecEdgarConnector(Connector[FormDFiling]):
             page += 1
 
     def _resolve_business_location(self, entries: Iterable[Any]) -> bool:
-        """Whether any ``_source.biz_locations`` entry (``"San Jose, CA"``) is a configured city.
-        Entries without a comma are ignored. The phrase search matches the whole document, so
-        a hit may come from a director's address (Lovable Labs, Boston, matched "Palo Alto");
-        ``to_records`` re-checks the issuer address from the XML."""
+        """Whether any ``_source.biz_locations`` entry (``"City, ST"``) is a configured city.
+        Entries without a comma are ignored. The phrase search matches the whole document, so a
+        hit can come back for a company headquartered elsewhere whose *director* lives in the
+        searched city; ``to_records`` re-checks the issuer address from the XML."""
         for entry in entries:
             if not isinstance(entry, str):
                 continue

@@ -1,4 +1,4 @@
-/* Bay Area Startup Tracker — the whole stylesheet (SPEC §9: "Deliberately plain styling").
+/* Startup Tracker — the whole stylesheet (SPEC §9: "Deliberately plain styling").
    Hand-written: no framework, no build step, no imported or remotely hosted fonts. A dense
    information tool for one reader, so the budget goes to legibility at 3,000+ rows rather than
    to decoration — tight vertical rhythm, hairline rules instead of boxes, metadata that reads
@@ -56,6 +56,12 @@ a { color: var(--accent); }
 /* The sector facet alone runs to hundreds of options; the shared 220px cap clips its longest
    names, so that one field opts into a wider box rather than every field growing. */
 .field.wide select { max-width: 320px; }
+/* The City select groups its options by metro (SPEC §12 Phase 7). Browsers render an <optgroup>
+   label in bold italic, which reads louder than the options it heads; this makes it a quiet
+   heading and puts the options back to normal weight, since an option inherits from its group.
+   The size is left alone deliberately — a smaller label breaks the list's line rhythm. */
+.field optgroup { font-style: normal; font-weight: 600; color: var(--muted); }
+.field optgroup option { font-weight: 400; color: var(--fg); }
 .actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 /* The expanded row's own filter (SPEC §9 "filterable within the row") lays out like `.filters`
    but is deliberately not that class: it sits inside a panel, not above a page, so it stays
@@ -100,7 +106,7 @@ a { color: var(--accent); }
 .summary-main { display: inline; font-weight: 600; }
 .summary-main .muted { font-weight: 400; }  /* the one-liner is not part of the name */
 /* Flex, so the metadata pieces are separated by a real gap rather than by whatever whitespace
-   survived the template — "San Francisco Series A $15M 3 open" has to read as four facts. */
+   survived the template — "<city> Series A $15M 3 open" has to read as four facts. */
 .summary-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 9px;
   margin-top: 1px; font-size: 12px; color: var(--muted); }
 .count { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }

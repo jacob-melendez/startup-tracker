@@ -41,15 +41,15 @@ Three Compose services (SPEC §3), and the boundary between them is the whole ar
  │  refresh  stats  │        └──────────────────┬──────────────────────┘
  │  merge-review    │                           │ SELECT only
  │  sync-contacts   │        ┌──────────────────▼──────────────────────┐
- └──────────────────┘        │  app     (uvicorn web.app:app, :8000)   │
-                             │  / · /roles · /company/{id} · /runs     │
+ │  sync-regions    │        │  app     (uvicorn web.app:app, :8000)   │
+ └──────────────────┘        │  / · /roles · /company/{id} · /runs     │
                              │  Jinja2 + HTMX; no outbound call, ever  │
                              └─────────────────────────────────────────┘
 ```
 
 The `cli.py` arrow is simplified: `refresh` and `seed` run the *same* connectors → pipeline path
-the scheduler does (that is the point — see below), while `migrate`, `stats`, `merge-review` and
-`sync-contacts` touch nothing but `db`.
+the scheduler does (that is the point — see below), while `migrate`, `stats`, `merge-review`,
+`sync-contacts` and `sync-regions` touch nothing but `db`.
 
 * **`db`** — `postgres:16`. The only database; there is no SQLite path anywhere, including in
   tests (CLAUDE.md). Alembic owns every piece of DDL.
@@ -208,6 +208,128 @@ historical fact (`_ensure_constructed_contacts` argues this at length). A `publi
 untouchable; the insert is `DO NOTHING` and every delete filters on `confidence = 'constructed'`.
 The only other deletion in the system is outside the pipeline entirely: the duplicate company row
 `merge-review` removes.
+
+### The region model
+
+`config/regions.yaml` is SPEC §11's expansion hook and, per CLAUDE.md, the only place a metro or
+a city may be named. `ingest/config.py::load_regions_config` is its only reader — `@cache`d on the
+path, so a test that swaps in an alternate file needs a unique path or a `cache_clear()`. Three
+shapes in that file are worth knowing before you read the code that consumes it.
+
+**`enabled`.** A region carries `enabled: bool = True`, and `RegionsConfig` exposes two views of
+the same file: `cities` / `metros` / `lookup()` see only the enabled regions — the view ingest,
+the CLI and the web layer use, so switching a metro off in one line stops it being ingested —
+while `all_cities` sees every region including the disabled ones. Only the file's own consistency
+checks use the wide view, which is why a `(city, state)` pair repeated across a *disabled* region
+is still a load error: `uq_locations_city_state` gives one city exactly one metro, so the file
+would describe a database that cannot exist, and flipping the flag back would be the moment it
+broke. `enabled: false` is not a delete, either — rows already stored keep their metro (SPEC §2),
+so a disabled metro can still appear in the UI's Region facet, which reads the `locations` table
+rather than the config precisely so the form never offers a value that returns nothing. The
+*count* of enabled regions also names the product: `web.templating.site_name` reads that same
+enabled view and returns `<metro> Startup Tracker` while exactly one region is enabled, plain
+`Startup Tracker` otherwise, for every page `<title>`, the header brand and the FastAPI app
+title. Two or more metros have no honest shared label, and inventing one would be a claim the
+config does not make.
+
+**Per-city state.** A city entry is either a bare string, which takes the region's default
+`state`, or a `{name, state}` mapping that overrides it for that one city — required because a
+real metro crosses a state line (the New York region is `state: NY` and holds Stamford CT). The
+loader normalizes both spellings to a flat `RegionCity` carrying its own `state`, so nothing
+downstream knows which form the file used. `country` is deliberately not overridable per city.
+
+Beside `state`, either level may carry an optional `state_name` — the same state written out in
+prose. It is never stored and only `hn_hiring` reads it, to tell a poster naming *this* city's
+state from one naming a different place of the same name; the state names live in the config for
+the same reason the metros do, and the letter heuristic that stood in for them before read a
+neighbouring state's name as this city's own. On a per-city override the two keys travel
+together: `Region.resolved_cities` takes `state` and `state_name` from the same side of the
+override, so a city in another state never inherits the region's spelling for its own, and
+`state_name` without `state` on a city is a load error with a path to the field.
+
+The consequence is that a *bare* city name no longer implies a state, so nothing may infer one by
+taking the first entry with that name: `RegionsConfig.lookup_city_name` answers only when exactly
+one enabled *state* configures the name and returns `None` — never a guess — when two do, whether
+those two sit in different regions or, as the mapping form allows, in the same one.
+`ingest/seed.py` uses it and *skips* an entry it cannot place, counting it under the
+`outside_region` skip counter every other connector already uses, rather than raising: with six
+metros and an `enabled` flag, a routine edit to the config must not be able to crash `make seed`.
+
+**Aliases.** The mapping form also carries `aliases`, the other spellings sources write that same
+place as. Every lookup matches the canonical `name` and each alias alike — `lookup`,
+`lookup_city_name`, and the needle sequence a text scanner walks — and every one of them answers
+with the `RegionCity`, whose `city` is the canonical spelling. That is the invariant to hold on
+to: **an alias is a string to match on and never a value to store.** `_fill_metros` writes
+`entry.city`, not the string the connector was handed, so recognising a source's own spelling
+costs no second row and `uq_locations_city_state` keeps holding one row per real place, named by
+this file. What a *missing* spelling costs is the whole record: the geography filter has no "close
+enough", so the connector drops it as out of region and the metro's company count comes out lower
+for a reason that is purely orthographic. Which spellings earn a line is therefore a measured
+question, answered in `config/regions.yaml` beside each alias with the count that earned it; the
+README's Regions section works the numbers through.
+
+The loader holds an alias to the same one-spelling-one-city rule it holds a name to: after
+normalization it may not collide with another city's name, or with another alias, within a state
+anywhere in the file — disabled regions included, for the same reason the `(city, state)` check
+includes them, that flipping `enabled: true` must not be the moment a file starts describing a
+database that cannot exist. A spelling two cities in one state answer to is exactly the tie-break
+`lookup_city_name` refuses to make, and the checks run in two passes so that an alias colliding
+with a city configured *later* in the file is reported as the alias collision it is. Two *states*
+may configure the same spelling, just as they may configure the same city name, and
+`lookup_city_name` returns `None` for it rather than guessing.
+
+Aliases are also why there are two ordered sequences and not one. `cities_longest_first` carries
+one string per city, ordered by the canonical name; `city_needles_longest_first` carries a
+`CityNeedle` per *spelling* — canonical names and aliases — ordered by the length of the needle.
+**A scanner over free text must use the second**: the first leaves it nothing to match an alias
+with, and ordering by the city's name would let a short name shadow a longer alias, which is the
+very failure longest-first ordering exists to prevent, arriving through the mechanism added to fix
+a related one. `hn_hiring.find_city` ranks the matched spelling's length for the same reason.
+
+**How a metro change propagates.** Editing the file changes what is *ingested*; it does not touch
+what is *stored*. Three separate mechanisms, and the third is a deliberate non-mechanism:
+
+1. **The next upsert adopts it.** `_fill_metros` replaces a configured city's `city`, `state`,
+   `country` *and* `metro` with the configured spelling before the record is written, and
+   `_upsert_locations` is `ON CONFLICT (city, state) DO UPDATE SET metro = …, country = …` rather
+   than `DO NOTHING` for exactly this reason: under `DO NOTHING` the metro a city was *first*
+   ingested with would be the metro it kept for ever, and the config would have stopped being
+   where the answer lives. It is safe to have every writer update the row because `_fill_metros`
+   has already made every writer write the same value *as it loaded the config* — within one
+   process the update is a byte-identical no-op, and the stored metro can only change when the
+   config did. Across processes that qualifier is the whole story: `load_regions_config` is
+   `@cache`d at load, so a scheduler that has not restarted since the edit still holds the old
+   file and its next fire rewrites a row a freshly-loaded `cli.py sync-regions` has just
+   corrected. It converges rather than corrupts — after the restart the same `DO UPDATE` writes
+   the new value — which is why the statement is left alone and the README's region recipe
+   restarts the scheduler *before* the sweep. Only an edit reassigning an already-stored city can
+   be reverted this way; adding a metro or a city, or `enabled: false`, cannot. The other
+   exception is a city no region claims: it keeps whatever label its connector invented, and
+   there the last writer wins, because nothing in the config can adjudicate a city it does not
+   list.
+
+   The rows are also locked in one global `(city, state)` order rather than the record's order,
+   which is the second thing the clause change changed: `DO NOTHING` takes no lock on a
+   conflicting row, while `DO UPDATE` takes an exclusive one and holds it until the record's
+   whole transaction commits. Record order as lock order let two overlapping runs naming the same
+   two cities in opposite orders deadlock on them, so `_upsert_locations` sorts; `sync-regions`
+   reaches the same rule from the other side by committing one row at a time.
+2. **`cli.py sync-regions` covers the rest.** A company nothing re-ingests — an EDGAR-only row
+   with no website, a seeded company whose board 404s — would otherwise keep its old metro
+   indefinitely, which is the same gap `sync-contacts` closes for SPEC §6. It walks `locations`,
+   looks each row up in the enabled config, rewrites `metro`/`country` where they differ, fetches
+   nothing and writes no `fetch_runs` row. A city in no enabled region is reported, never changed
+   and never deleted (SPEC §2).
+3. **Entity resolution is not re-run, on purpose.** Step 2 below matches names *within a metro*,
+   so moving a city between metros changes which companies would have been compared. Re-deciding
+   that in bulk from a config edit is the auto-merge SPEC §8 forbids — nobody looked at those
+   pairs. So nothing is merged or split by editing the file. Neither does a later ingest run pick
+   the pair up: `record_merge_candidates` runs *only when the company was created* (see the call
+   order below), and a company already stored resolves by `external_id`, domain or name and never
+   reaches it again — so a newly co-located pair enters `merge_candidates` only if some third,
+   similar record is created later. Nothing in the tree re-compares an existing pair on demand,
+   deliberately; after a move, `cli.py stats`' companies-per-metro section and the UI's Region
+   filter are what let a person look.
 
 ---
 
@@ -520,17 +642,20 @@ but it can still be Failing, because it can still be run by hand.
 
 ### The CLI
 
-Six commands, all local except where noted (SPEC §11 names five of them; `sync-contacts` is the
-one addition, and CLAUDE.md records it).
+Seven commands, all local except where noted (SPEC §11 names five of them; `sync-contacts` and
+`sync-regions` are the two additions, and CLAUDE.md records both). The pair are the same shape on
+purpose: each reconciles rows already stored against a rule that has since changed, neither
+fetches anything, and neither writes a `fetch_runs` row.
 
 | command | fetches? | what it does |
 |---|---|---|
 | `migrate` | no | `alembic upgrade head` through the Alembic API — the same thing `make migrate` runs |
 | `seed` | yes | loads `config/seed_companies.yaml`, HEAD-validating every domain (SPEC §10). A normal connector run, so it writes a `fetch_runs` row |
 | `refresh` | yes | one connector (`--connector NAME`) or every enabled one (`--all`), with `--since YYYY-MM-DD`. Together with the scheduler, the only place external data is fetched |
-| `stats` | no | row counts, last successful run per connector, and companies and jobs added in the last 7 days |
+| `stats` | no | row counts, companies per metro, last successful run per connector, and companies and jobs added in the last 7 days |
 | `merge-review` | no | resolves `merge_candidates` pairs — the rows the pipeline is forbidden to auto-merge |
 | `sync-contacts` | no | rebuilds SPEC §6's *constructed* LinkedIn links across the whole database; writes no `fetch_runs` row, because nothing was fetched |
+| `sync-regions` | no | relabels `locations` rows whose `metro`/`country` no longer match `config/regions.yaml`, for the companies nothing is re-ingesting; reports a city no enabled region claims rather than touching it, and never re-runs entity resolution ([the region model](#the-region-model)) |
 
 `stats` never prints `DATABASE_URL` — `cli.database_label` parses it with `make_url` and keeps
 only the database, host and (when there is one) port, because the URL carries a password. Log
@@ -564,7 +689,7 @@ The point of this table is to learn to edit YAML rather than Python.
 | Connector-specific knobs (backfill months, feed URLs, page caps) | `config/connectors.yaml` → `options` | the connector, which validates but does not hard-code them |
 | `role_family` / `employment_type` / `seniority` / `flexible_signal` keywords | `config/classifiers.yaml` | `ingest/classify.py`, which compiles them; the matched keyword is logged |
 | Round-type keywords, `Person.role_type` keywords, and SPEC §6's people-search terms | `config/classifiers.yaml` → `funding`, `contacts.person_role_type`, `contacts.people_search_terms` | `ingest/contacts.py`, which only assembles the URL |
-| Which cities and metros exist | `config/regions.yaml` | everywhere else — it is the only place Bay-Area-specific logic may live (SPEC §11, Phase 7) |
+| Which metros exist, which cities are in each, each city's state, the other spellings a source may write a city as (`aliases`), and whether a metro is `enabled` at all | `config/regions.yaml` | everywhere else — SPEC §11 makes it the only place region-specific logic may live, and `tests/test_regions.py` takes every metro and city name in the file as a needle and fails the build if one appears as a literal in the source tree, comments and docstrings included ([the region model](#the-region-model)) |
 | The bootstrap company list | `config/seed_companies.yaml` | — ATS tokens are never seeded; the connectors discover them |
 | **Connector priority** (SPEC §8) | `ingest/pipeline.py` → `CONNECTOR_PRIORITY` | `config/connectors.yaml`, deliberately: priority is a correctness property of the merge rule, not an operational knob |
 | Which connectors exist and in what order `--all` runs them | `ingest/connectors/__init__.py` → `all_connectors()` | config; a name with no implementation is listed in the YAML and marked unimplemented on `/runs` |

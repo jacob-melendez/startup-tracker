@@ -35,9 +35,14 @@ async def role_list(
 ) -> Response:
     """One page of roles. A ``closed`` flag is the only way a closed role appears (SPEC §2, §9).
 
-    One statement on a fragment render: the page of rows. A full page adds the two facet
+    One statement on a fragment render: the page of rows. A full page adds the three facet
     lookups, which are called here rather than declared as a dependency because only the full
     page renders the filter form that reads them (see :func:`web.deps.facets`).
+
+    The filter set arrives whole from :func:`web.filters.shared_filters` and is passed straight
+    to the statement, so this handler names no individual filter — that is the mechanism behind
+    §9's "same filter set" above, and the reason SPEC §12 Phase 7's ``metro`` reached this view
+    without a line of its own.
     """
     page = await queries.job_list_page(
         session, filters=listing.filters, sort=listing.sort, cursor=listing.cursor

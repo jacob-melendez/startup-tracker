@@ -1,7 +1,8 @@
-# CLAUDE.md — Bay Area Startup Tracker
+# CLAUDE.md — Startup Tracker
 
-Locally-run web app: scheduled connectors fill a Postgres database of Bay Area startups and their open
-roles; a server-rendered UI browses, filters, and tracks them. `docs/SPEC.md` is the source of truth and
+Locally-run web app: scheduled connectors fill a Postgres database of startups and their open roles
+across the US metros `config/regions.yaml` lists — the Bay Area and five more since §12 Phase 7 — and
+a server-rendered UI browses, filters, and tracks them. `docs/SPEC.md` is the source of truth and
 every rule below cites it. Build one §12 phase per prompt, each ending in a working, committed, tested state.
 v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app, email notifications, paid APIs.
 
@@ -41,7 +42,12 @@ v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app,
   keyword rule, editable without code changes. No keywords in code. Log the matched keyword (§7.1).
 - `config/connectors.yaml` holds every connector's cron cadence and rate limits, loaded by APScheduler at
   startup. It is the only place a schedule is defined (§7.2, §11).
-- `config/regions.yaml` holds the city list — the only place Bay-Area-specific logic may live (§11, §12 Phase 7).
+- `config/regions.yaml` holds every metro and its city list — each city's state, how that state is written
+  out (`state_name`), the alias spellings sources use for a city, and the `enabled` flag that takes a metro
+  out of ingestion without deleting a row. It is the only place region-specific logic
+  may live: no metro or city name may appear as a literal anywhere else, comments and docstrings included,
+  and `tests/test_regions.py` fails the build when one does. Editing it changes what is *ingested*; run
+  `cli.py sync-regions` to relabel what is already stored (§11, §12 Phase 7).
 - `config/seed_companies.yaml` bootstraps; never hardcode ATS tokens — connector discovery finds them (§4, §10).
 
 ### Classification never excludes
@@ -72,4 +78,6 @@ v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app,
 - `pytest` + `pytest-asyncio`; DB tests run against a disposable Postgres (testcontainers or Compose).
 - Docker Compose services `db`, `app`, `scheduler`; `make up` is the only setup step.
 - Makefile targets: `up down migrate seed refresh test lint`. CLI: `migrate seed refresh stats merge-review`,
-  plus `sync-contacts` (§6's constructed links across a whole database — local only, fetches nothing).
+  plus `sync-contacts` (§6's constructed links across a whole database — local only, fetches nothing) and
+  `sync-regions` (§11's metros across a whole database — local only, fetches nothing, never re-runs entity
+  resolution, since §8 forbids deciding a merge without a person).

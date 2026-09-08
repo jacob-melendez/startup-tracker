@@ -236,13 +236,19 @@ def _fill_metros(
 ) -> list[LocationRecord]:
     """Design decision 5b: fill a missing ``metro`` from ``config/regions.yaml`` and adopt the
     configured spelling of city/state/country — and of the metro itself — so ``Location`` rows
-    never split on casing. ``config/regions.yaml`` is the only source of region labels
-    (CLAUDE.md): a connector's own label for a configured city (``"bay area"``) is replaced,
-    never persisted, because the record's resolution metro must equal a stored
-    ``Location.metro`` for SPEC §8 steps 2/3 to find anything. A connector-supplied metro is
-    kept only for a city the config does not know. Locations still without a metro are
-    dropped here with a debug log — ``Location.metro`` is NOT NULL and nothing outside the
-    configured regions is stored (SPEC §1)."""
+    never split on casing, nor on a source's own name for a place:
+    :meth:`~ingest.config.RegionsConfig.lookup` answers to a city's configured aliases as well as
+    to its name and hands back the entry under the canonical one. Adopting that name here is what
+    makes recognising one more spelling free — the spelling widens what is ingested while
+    ``uq_locations_city_state`` still holds one row for one city — so the alias list is a config
+    edit and not a schema question. ``config/regions.yaml`` is the only source of region labels
+    (CLAUDE.md): for a configured city a connector's own label — its own casing of the
+    configured name, or a region label of its own invention — is replaced, never persisted,
+    because the record's resolution metro must equal a stored ``Location.metro`` for SPEC §8
+    steps 2/3 to find anything. A connector-supplied metro is kept only for a city the config
+    does not know. Locations still without a metro are dropped here with a debug log —
+    ``Location.metro`` is NOT NULL and nothing outside the configured regions is stored
+    (SPEC §1)."""
     filled: list[LocationRecord] = []
     for location in locations:
         configured = regions.lookup(location.city, location.state)
@@ -430,35 +436,67 @@ async def _upsert_company_source(
 async def _upsert_locations(
     session: AsyncSession, company_id: int, locations: Sequence[LocationRecord]
 ) -> None:
-    """``Location`` get-or-create on ``(city, state)`` (``uq_locations_city_state``) and the
+    """``Location`` upsert on ``(city, state)`` (``uq_locations_city_state``) and the
     ``CompanyLocation`` link; ``is_hq`` is sticky (existing OR incoming) so a connector that
-    does not know which office is HQ never demotes one."""
-    seen: set[tuple[str, str]] = set()
+    does not know which office is HQ never demotes one.
+
+    ``ON CONFLICT DO UPDATE``, not ``DO NOTHING``: the ``metro`` a city is *first* ingested
+    with would otherwise be the metro it keeps for ever, and the day the city is moved between
+    regions in ``config/regions.yaml`` — or a region it sits in is renamed — the stored row
+    would keep contradicting the file. That is region logic living outside the config, which
+    SPEC §11 and CLAUDE.md put there and nowhere else, so the row converges on the config
+    instead. (``cli.py sync-regions`` is the same reconciliation for rows no connector is
+    re-ingesting.)
+
+    Safe because every writer writes the same value *as it loaded the config*:
+    :func:`_fill_metros` has already replaced every configured city's ``metro`` and ``country``
+    with the configured one, so two connectors in one process reporting the same city write
+    byte-identical values and the update is a no-op. Two *processes* can hold different vintages
+    of the file, and then they do not agree: ``ingest.config.load_regions_config`` is cached at
+    load, so a long-running scheduler keeps the file it started with until it is restarted, and
+    its next fire rewrites a row that a freshly-loaded ``cli.py sync-regions`` has just corrected
+    — back to a metro the file no longer names, until the restart. It converges rather than
+    corrupts (the restart makes the same ``DO UPDATE`` write the new value), which is why the
+    statement stays as it is and the README's region recipe restarts the scheduler first. A city
+    no region claims is the other exception: it keeps whatever label its connector invented (see
+    :func:`_fill_metros`) and the last writer wins, since nothing in the config can adjudicate a
+    city it does not list, and SPEC §8's metro-scoped name match follows the label that is
+    stored.
+
+    ``DO UPDATE ... RETURNING`` always yields the row — unlike ``DO NOTHING``, which returns
+    nothing on a conflict and needed a follow-up ``SELECT`` — so the id is never missing here.
+
+    The rows are locked in one global order, ``(city, state)``, and not in the order the record
+    lists them. That is the other half of what changing the clause changed: ``DO NOTHING`` takes
+    no lock on an existing conflicting row, while ``DO UPDATE`` takes an exclusive one and holds
+    it until the whole record's transaction commits — through the sectors, rounds, people,
+    contacts and every job below. Record order would therefore be lock order, and two overlapping
+    runs whose records name the same two cities in opposite orders would deadlock on them
+    (measured: roughly one lost record per 150 companies per pair of overlapping processes, and
+    a connector really does emit the same pair both ways round). ``cli.py sync_regions_once``
+    already avoids this from its own side by committing one row at a time; sorting is this
+    side's version of the same rule. Nothing else depends on the order: the surviving row per
+    key is unchanged, ``is_hq`` is OR-ed into the link rather than positional, and every reader
+    orders explicitly (``db/queries.py``).
+    """
+    seen: dict[tuple[str, str], LocationRecord] = {}
     for location in locations:
-        key = (location.city, location.state)
-        if key in seen:
-            continue
-        seen.add(key)
-        stmt = (
-            insert(Location)
-            .values(
-                city=location.city,
-                state=location.state,
-                metro=location.metro,
-                country=location.country,
-            )
-            .on_conflict_do_nothing(constraint="uq_locations_city_state")
-            .returning(Location.id)
+        # First wins, as before: a record listing one place twice keeps the first spelling of it.
+        seen.setdefault((location.city, location.state), location)
+    for key, location in sorted(seen.items(), key=lambda item: item[0]):
+        values = insert(Location).values(
+            city=location.city,
+            state=location.state,
+            metro=location.metro,
+            country=location.country,
         )
+        stmt = values.on_conflict_do_update(
+            constraint="uq_locations_city_state",
+            set_={"metro": values.excluded.metro, "country": values.excluded.country},
+        ).returning(Location.id)
         location_id = await session.scalar(stmt)
-        if location_id is None:
-            location_id = await session.scalar(
-                select(Location.id).where(
-                    Location.city == location.city, Location.state == location.state
-                )
-            )
-        if location_id is None:
-            msg = f"location {key!r} could neither be inserted nor found"
+        if location_id is None:  # pragma: no cover - DO UPDATE always returns its row
+            msg = f"location {key!r} could neither be inserted nor updated"
             raise RuntimeError(msg)
         link = insert(CompanyLocation).values(
             company_id=company_id, location_id=location_id, is_hq=location.is_hq

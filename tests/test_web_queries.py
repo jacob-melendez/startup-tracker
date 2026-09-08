@@ -11,6 +11,12 @@ Three things here are load-bearing rather than incidental:
   a tie or at the NULL boundary;
 * **the role filters conjoin on one job**, so a company with a part-time marketing role and a
   full-time software role does not match ``family=software`` plus ``employment=part_time``.
+
+SPEC §12 Phase 7 added a fourth: **``metro`` is a filter beside ``city``, not above it**. The
+two are independent semi-joins, so they compose as an ``AND`` over a company's whole set of
+offices rather than as one geography, and neither may turn a company with several matching
+offices into several rows — which would break the page size and the keyset order at once. The
+``metro_*`` tests below are that pair of properties.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from db.models import Company
 from db.queries import (
     MAX_PAGE_SIZE,
     PAGE_SIZE,
+    CityFacet,
     CompanyRow,
     CompanySort,
     Cursor,
@@ -38,6 +45,7 @@ from db.queries import (
     company_jobs,
     company_list_page,
     facet_cities,
+    facet_metros,
     facet_sectors,
     job_list_page,
     last_successful_runs,
@@ -221,6 +229,152 @@ async def test_city_filter_is_a_semi_join(session: AsyncSession) -> None:
         session, filters=Filters(cities=("Oakland", "Berkeley")), sort=CompanySort.NAME
     )
     assert ids(page) == [berkeley.id, both.id]
+
+
+async def test_metro_filter_selects_a_whole_region_across_state_lines(
+    session: AsyncSession,
+) -> None:
+    """SPEC §12 Phase 7's region selector: it filters ``locations.metro``, nothing else.
+
+    The New York metro is deliberately represented by one NY city and one NJ one, because that
+    is the case that separates the column that is meant from every plausible substitute. A
+    predicate that read ``locations.state``, or that matched the metro name against the city,
+    would return Brooklyn and drop Jersey City — and would go on passing against a
+    single-state region forever.
+    """
+    bridge = await make_company(session, "Bridge Robotics")
+    await make_location(session, bridge, "Brooklyn", is_hq=True)
+    harbor = await make_company(session, "Harbor Data")
+    await make_location(session, harbor, "Jersey City", is_hq=True)
+    pike = await make_company(session, "Pike Systems")
+    await make_location(session, pike, "Seattle")
+    await make_company(session, "Unplaced")  # no location row at all
+
+    page = await company_list_page(
+        session, filters=Filters(metros=("New York",)), sort=CompanySort.NAME
+    )
+    assert ids(page) == [bridge.id, harbor.id]
+
+    # Two regions at once are an OR within the one filter, as every other multi-select is.
+    both = await company_list_page(
+        session, filters=Filters(metros=("New York", "Seattle")), sort=CompanySort.NAME
+    )
+    assert ids(both) == [bridge.id, harbor.id, pike.id]
+    # A region nothing has been ingested for is an empty page, never an error: the value is
+    # free text from the data, not an enum (``web.filters`` says so in as many words).
+    assert ids(await company_list_page(session, filters=Filters(metros=("Nowhere",)))) == []
+
+
+async def test_metro_and_city_are_independent_and_predicates(session: AsyncSession) -> None:
+    """``metro=New York&city=Oakland`` wants an office in each, not one office in both.
+
+    The two filters are separate ``EXISTS`` subqueries over a company's offices, which is what
+    lets the UI leave the City select alone when a region is picked. Folding them into one
+    subquery — the obvious simplification, since both scope ``locations`` — would quietly mean
+    "one office that is in Oakland *and* in the New York metro", i.e. nothing, and this
+    bicoastal company is the only shape that tells the two readings apart.
+    """
+    bicoastal = await make_company(session, "Bicoastal")
+    await make_location(session, bicoastal, "Oakland", is_hq=True)
+    await make_location(session, bicoastal, "Brooklyn")
+    oakland_only = await make_company(session, "Oakland only")
+    await make_location(session, oakland_only, "Oakland")
+    brooklyn_only = await make_company(session, "Brooklyn only")
+    await make_location(session, brooklyn_only, "Brooklyn")
+
+    together = await company_list_page(
+        session, filters=Filters(cities=("Oakland",), metros=("New York",))
+    )
+    assert ids(together) == [bicoastal.id]
+
+    # Each half alone is strictly wider, so the conjunction is what did the narrowing.
+    city_only = await company_list_page(session, filters=Filters(cities=("Oakland",)))
+    assert set(ids(city_only)) == {bicoastal.id, oakland_only.id}
+    metro_only = await company_list_page(session, filters=Filters(metros=("New York",)))
+    assert set(ids(metro_only)) == {bicoastal.id, brooklyn_only.id}
+
+
+async def test_metro_composes_with_a_role_filter(session: AsyncSession) -> None:
+    """A geography filter and a role filter narrow together — SPEC §9's "all combinable".
+
+    Both pages are asked, because ``/`` and ``/roles`` reach the metro predicate by the same
+    ``_company_predicates`` call and a regression in it would be visible in whichever one the
+    test happened to skip.
+    """
+    ny_data = await make_company(session, "Empire Analytics")
+    await make_location(session, ny_data, "Brooklyn")
+    wanted = await make_job(session, ny_data, "Data engineer", role_family=enums.RoleFamily.DATA)
+    ny_design = await make_company(session, "Empire Studio")
+    await make_location(session, ny_design, "New York")
+    await make_job(session, ny_design, "Product designer", role_family=enums.RoleFamily.DESIGN)
+    bay_data = await make_company(session, "Bay Analytics")
+    await make_location(session, bay_data, "Oakland")
+    await make_job(session, bay_data, "Data engineer", role_family=enums.RoleFamily.DATA)
+
+    filters = Filters(metros=("New York",), role_families=(enums.RoleFamily.DATA,))
+    assert ids(await company_list_page(session, filters=filters)) == [ny_data.id]
+    assert ids(await job_list_page(session, filters=filters)) == [wanted.id]
+
+
+async def test_a_company_with_several_offices_in_one_metro_appears_once(
+    session: AsyncSession,
+) -> None:
+    """The anti-fan-out property, and the reason ``metro`` is a semi-join rather than a join.
+
+    An inner join through ``company_locations`` would return this company three times — once
+    per matching office — which silently costs the page two of its 50 rows and makes the keyset
+    cursor point at a row the next page has already shown. The role list repeats the same
+    predicates over a second join, so it is asked too: there the duplication would be per role
+    *and* per office.
+    """
+    crosstown = await make_company(session, "Crosstown")
+    await make_location(session, crosstown, "Brooklyn", is_hq=True)
+    await make_location(session, crosstown, "Jersey City")
+    await make_location(session, crosstown, "New York")
+    role = await make_job(session, crosstown, "Engineer")
+    neighbour = await make_company(session, "Neighbour")
+    await make_location(session, neighbour, "Brooklyn")
+    # Outside the region, so "appears once" cannot be satisfied by the filter doing nothing.
+    absent = await make_company(session, "Absent")
+    await make_location(session, absent, "Oakland")
+    await make_job(session, absent, "Engineer")
+
+    filters = Filters(metros=("New York",))
+    page = await company_list_page(session, filters=filters, sort=CompanySort.NAME)
+    assert ids(page) == [crosstown.id, neighbour.id]
+    assert ids(await job_list_page(session, filters=filters)) == [role.id]
+
+
+async def test_the_metro_filter_holds_across_a_keyset_page_boundary(
+    session: AsyncSession,
+) -> None:
+    """The cursor predicate is ANDed with the metro filter, page 2 as much as page 1.
+
+    The two regions are interleaved by name, so the sort walks in and out of the filtered set
+    on every page: a metro predicate that only reached the first statement would not merely add
+    rows at the end, it would splice the Bay Area companies into the middle of the walk.
+    """
+    wanted: list[int] = []
+    unwanted: list[int] = []
+    for index in range(11):
+        company = await make_company(session, f"Metro co {index:02d}")
+        if index % 3:
+            await make_location(session, company, "Brooklyn")
+            wanted.append(company.id)
+        else:
+            await make_location(session, company, "Oakland")
+            unwanted.append(company.id)
+
+    filters = Filters(metros=("New York",))
+    whole = await company_list_page(
+        session, filters=filters, sort=CompanySort.NAME, limit=MAX_PAGE_SIZE
+    )
+    walked, pages = await walk_companies(session, sort=CompanySort.NAME, filters=filters, limit=3)
+
+    assert pages == 3, "seven rows in pages of three"
+    assert walked == ids(whole) == wanted
+    assert len(set(walked)) == len(wanted) == 7
+    assert set(walked).isdisjoint(unwanted)
 
 
 async def test_sector_filter(session: AsyncSession) -> None:
@@ -808,6 +962,52 @@ async def test_hq_city_falls_back_to_any_city(session: AsyncSession) -> None:
     assert extras[company.id].hq_city == "Fremont"
 
 
+async def test_a_geographically_filtered_row_names_the_office_it_matched_on(
+    session: AsyncSession,
+) -> None:
+    """SPEC §12 Phase 7's region selector, and SPEC §9's collapsed row, have to agree.
+
+    The row names one city, the HQ. The filter asks whether *any* location qualifies — the only
+    reading that does not hide a real office — so a company headquartered in one metro with an
+    office in another is a correct hit for either, and without this the row would show a city
+    outside the filter and read as a leak. On the live Y Combinator data that was 19 of the 300
+    rows across the six single-region filters.
+    """
+    company = await make_company(session, "Two offices")
+    await make_location(session, company, "San Francisco", is_hq=True)
+    await make_location(session, company, "Seattle")
+    extras = (await company_card_extras(session, [company.id]))[company.id]
+
+    # Filtered to the metro the HQ is *not* in: the row says which office answered.
+    assert extras.matched_office(Filters(metros=("Seattle",))) == "Seattle"
+    # ...and to the one it is in: nothing to add, the row already names it.
+    assert extras.matched_office(Filters(metros=("Bay Area",))) is None
+    # The city filter has always had the same shape and gets the same treatment.
+    assert extras.matched_office(Filters(cities=("Seattle",))) == "Seattle"
+    assert extras.matched_office(Filters(cities=("San Francisco",))) is None
+    # Nothing geographic filtered: the row must not sprout a second city.
+    assert extras.matched_office(Filters()) is None
+    assert extras.matched_office(Filters(role_families=(enums.RoleFamily.SOFTWARE,))) is None
+
+
+async def test_matched_office_is_silent_for_a_company_the_filter_would_not_return(
+    session: AsyncSession,
+) -> None:
+    """A row the filter did not produce must not claim an office it does not have.
+
+    Unreachable through ``/`` — the page only ever holds extras for rows the filter returned —
+    but :func:`company_card_extras` is a public query and the property has to be total.
+    """
+    company = await make_company(session, "Elsewhere only")
+    await make_location(session, company, "Austin", is_hq=True)
+    extras = (await company_card_extras(session, [company.id]))[company.id]
+    assert extras.matched_office(Filters(metros=("Boston",))) is None
+
+    located_nowhere = await make_company(session, "No office at all")
+    bare = (await company_card_extras(session, [located_nowhere.id]))[located_nowhere.id]
+    assert bare.matched_office(Filters(metros=("Boston",))) is None
+
+
 async def test_company_jobs_is_unfiltered_and_ordered(session: AsyncSession) -> None:
     """SPEC §9: the expanded row shows every role, whatever the page-level filter says."""
     company = await make_company(session, "Acme")
@@ -841,15 +1041,29 @@ async def test_company_jobs_is_unfiltered_and_ordered(session: AsyncSession) -> 
 
 
 async def test_facets(session: AsyncSession) -> None:
+    """What the filter form offers, read from the tables rather than from the config (§11).
+
+    ``facet_cities`` is a row per city since SPEC §12 Phase 7, ordered by metro then city so
+    the City select's ``<optgroup>`` per metro is contiguous without the template sorting
+    anything itself. The state and the metro ride along for display only — the ``city=`` wire
+    value is still the bare name.
+    """
     first = await make_company(session, "First")
     second = await make_company(session, "Second")
     await make_location(session, first, "Oakland")
     await make_location(session, second, "Oakland")  # the same city, listed once
     await make_location(session, second, "Berkeley")
+    await make_location(session, second, "Jersey City")
     await make_sector(session, first, "Climate", slug="climate")
     await make_sector(session, second, "AI Infrastructure", slug="ai-infra")
 
-    assert await facet_cities(session) == ["Berkeley", "Oakland"]
+    assert await facet_cities(session) == [
+        CityFacet(city="Berkeley", state="CA", metro="Bay Area"),
+        CityFacet(city="Oakland", state="CA", metro="Bay Area"),
+        CityFacet(city="Jersey City", state="NJ", metro="New York"),
+    ]
+    # Alphabetical, and one entry per metro however many of its cities are in the table.
+    assert await facet_metros(session) == ["Bay Area", "New York"]
     assert await facet_sectors(session) == [
         ("ai-infra", "AI Infrastructure"),
         ("climate", "Climate"),

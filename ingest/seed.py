@@ -1,9 +1,9 @@
 """The seed loader: `config/seed_companies.yaml` → companies, with domain validation (SPEC §10).
 
 Cold-starting from EDGAR alone is slow and the ATS connectors have nothing to discover board
-tokens from, so `cli.py seed` bootstraps the database with the Bay Area companies of SPEC §10
-(58 entries, which §14.2 rounds to "55"). What the spec asks of the loader, and where it
-happens here:
+tokens from, so `cli.py seed` bootstraps the database with the hand-picked companies of
+SPEC §10 (58 entries, which §14.2 rounds to "55"). What the spec asks of the loader, and where
+it happens here:
 
 * **"resolve each domain (HEAD request, follow redirects)"** — :meth:`SeedConnector.validate`
   sends one ``HEAD https://{domain}/`` through the shared :class:`ingest.http.HttpClient`,
@@ -44,7 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from db import enums
 from ingest.base import CompanyRecord, Connector, FetchContext, LocationRecord
-from ingest.config import CONFIG_DIR, ConnectorConfig, RegionCity, RegionsConfig
+from ingest.config import CONFIG_DIR, ConnectorConfig, RegionsConfig
 from ingest.http import HostBudgetExceeded, RobotsDisallowed
 from ingest.normalize import normalize_domain
 from logging_config import get_logger
@@ -177,6 +177,10 @@ class SeedConnector(Connector[SeedResult]):
         super().__init__(config, regions)
         self.options = SeedOptions.model_validate(config.options)
         self.seed = seed_file if seed_file is not None else load_seed_file()
+        #: Entries dropped in :meth:`to_records`, by reason — the counter every connector keeps
+        #: (``ycombinator``, ``hn_hiring``, ``sec_edgar``), so a seed entry that never reaches
+        #: the database is counted in the same place a reader already looks for that number.
+        self.skipped: dict[str, int] = {}
 
     # ------------------------------------------------------------------ fetch
 
@@ -188,6 +192,7 @@ class SeedConnector(Connector[SeedResult]):
         Validation problems are appended to ``ctx.problems`` so the run ends ``partial`` and
         the failures are visible on ``/runs`` — the run itself never fails (SPEC §10).
         """
+        self.skipped = {}
         entries = self.seed.entries
         ctx.log.info(
             "seed.start", entries=len(entries), validate_domains=self.options.validate_domains
@@ -202,7 +207,10 @@ class SeedConnector(Connector[SeedResult]):
             key = result.status.value if result.status is not None else "reachable"
             counts[key] = counts.get(key, 0) + 1
             yield result
-        ctx.log.info("seed.summary", entries=len(entries), outcomes=counts)
+        # Reached after the pipeline has mapped the last entry, so ``skipped`` is complete.
+        ctx.log.info(
+            "seed.summary", entries=len(entries), outcomes=counts, skipped=dict(self.skipped)
+        )
 
     async def validate(self, ctx: FetchContext, entry: SeedEntry) -> SeedResult:
         """SPEC §10's domain validation for one entry: ``HEAD``, redirects followed.
@@ -291,20 +299,36 @@ class SeedConnector(Connector[SeedResult]):
         A cross-domain redirect is logged instead.
 
         ``state`` comes from ``config/regions.yaml`` (the only place region logic lives): the
-        entry names a city, the config says which state and metro it is in. A city no region
-        knows raises — the seed file must not smuggle in a company outside the configured
-        metros.
+        entry names a city, the config says which state and metro it is in. An entry that names
+        a state is looked up on the pair; one that does not is looked up by name across the
+        enabled regions (:meth:`~ingest.config.RegionsConfig.lookup_city_name`, which answers
+        ``None`` for a bare name two enabled *states* configure rather than guessing one of
+        them — whether those two states sit in different regions or, as the mapping form
+        allows, in the same one). Either
+        lookup also matches a city's configured *aliases* — the other spellings the file records
+        for that same place — and answers with the entry itself, so ``configured.city`` below is
+        the canonical spelling however the seed wrote it, and one place keeps one row
+        (``uq_locations_city_state``) instead of gaining a second under the seed's own wording.
+
+        A city the config cannot resolve — in no enabled region, or a bare name two enabled
+        states both configure — is **skipped**, not an error: with several metros configured,
+        switching one off with ``enabled: false`` is a one-line config edit, and every seeded
+        company in that metro would otherwise crash ``make seed`` on the first entry instead of
+        loading the rest. The entry is counted under ``outside_region`` — the reason every other
+        connector uses for a record outside the configured regions, one key so one number
+        answers "how many seeds did not land" — and logged at *warning* rather than the
+        connectors' ``info``, because ``config/seed_companies.yaml`` is a hand-written file: a
+        city no region claims is a mistake in one of the two configs, not the routine national
+        noise a connector filters all day. The log line carries the entry's ``city`` and
+        ``state``, which is what tells the two cases apart; the cure for an ambiguous name is a
+        ``state:`` on the seed entry.
         """
         entry = raw.entry
         configured = self.regions.lookup(entry.city, entry.state) if entry.state else None
         if configured is None:
-            configured = self._lookup_by_city(entry.city)
+            configured = self.regions.lookup_city_name(entry.city)
         if configured is None:
-            msg = (
-                f"seed entry {entry.name!r}: city {entry.city!r} is in no region of "
-                "config/regions.yaml"
-            )
-            raise ValueError(msg)
+            return self._skip("outside_region", entry, state=entry.state)
 
         if raw.final_url is not None:
             final_domain = normalize_domain(raw.final_url)
@@ -340,13 +364,18 @@ class SeedConnector(Connector[SeedResult]):
             )
         ]
 
-    def _lookup_by_city(self, city: str) -> RegionCity | None:
-        """The configured city of this name in any region, for an entry that named no state."""
-        for state in dict.fromkeys(region.state for region in self.regions.regions):
-            found = self.regions.lookup(city, state)
-            if found is not None:
-                return found
-        return None
+    def _skip(self, reason: str, entry: SeedEntry, **details: object) -> tuple[CompanyRecord, ...]:
+        """Drop one entry, counted and logged — nothing else in the run changes."""
+        self.skipped[reason] = self.skipped.get(reason, 0) + 1
+        log.warning(
+            "seed.skip",
+            reason=reason,
+            name=entry.name,
+            domain=entry.domain,
+            city=entry.city,
+            **details,
+        )
+        return ()
 
 
 def _slug(name: str) -> str:

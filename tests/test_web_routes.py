@@ -50,9 +50,11 @@ from tests.support_web import (
     make_sector,
     next_link,
     refresh_denormalized,
+    select_options,
     walk_pages,
 )
 from web.routes.runs import connector_health
+from web.templating import site_name
 
 #: The header htmx puts on every request it makes.
 HX = {"HX-Request": "true"}
@@ -427,6 +429,12 @@ async def test_load_more_walks_the_whole_list(
         ("q=", ("northstar", "tracked", "quiet")),
         ("city=Oakland", ("northstar",)),
         ("city=Oakland&city=Berkeley", ("northstar", "quiet")),
+        # The whole corpus sits in one region, so Region separates it from every other one
+        # (SPEC §12 Phase 7); the dedicated tests below seed a second metro.
+        ("metro=Bay+Area", ("northstar", "tracked", "quiet")),
+        ("metro=New+York", ()),
+        ("metro=", ("northstar", "tracked", "quiet")),
+        ("metro=Bay+Area&city=Oakland", ("northstar",)),
         ("sector=fintech", ("quiet",)),
         ("stage=seed", ("quiet",)),
         ("stage=", ("northstar", "tracked", "quiet")),
@@ -470,6 +478,8 @@ async def test_company_filters_round_trip_through_http(
         ("q=marketer", ("ns_marketing",)),
         ("sort=company", ("ns_software", "ns_marketing", "tracked_data")),
         ("city=San+Jose", ("tracked_data",)),
+        ("metro=Bay+Area", ("ns_software", "ns_marketing", "tracked_data")),
+        ("metro=New+York", ()),
     ],
 )
 async def test_role_filters_round_trip_through_http(
@@ -479,6 +489,226 @@ async def test_role_filters_round_trip_through_http(
 
     assert response.status_code == 200, response.text[:400]
     assert job_ids(response.text) == [getattr(corpus, name) for name in expected]
+
+
+# ------------------------------------------------- the region selector (SPEC §12 Phase 7)
+
+
+async def test_an_empty_metro_parameter_is_the_default_view(
+    client: httpx.AsyncClient, corpus: Corpus
+) -> None:
+    """``?metro=`` is an untouched control, not a request for the empty region.
+
+    The module's second rule (``web.filters``): a GET form submits every field it has, and a
+    hand-cleared URL keeps the parameter with nothing after the ``=``. Both have to be the
+    unfiltered view. It is worth its own test for ``metro`` because the value is free text
+    rather than an enum — nothing downstream would reject ``""``, so a blank that survived
+    ``_clean`` would filter on a region no row can have and empty both pages instead of
+    raising, which is the failure that looks like data loss rather than like a bug.
+    """
+    companies = await client.get("/?metro=")
+    assert companies.status_code == 200
+    assert company_ids(companies.text) == company_ids((await client.get("/")).text)
+    roles = await client.get("/roles?metro=")
+    assert job_ids(roles.text) == job_ids((await client.get("/roles")).text)
+    # ...and the form comes back with nothing selected, so the next click is not narrower
+    # either — an echoed blank would submit `?metro=` again and hide the difference forever.
+    assert form_state(companies.text)["metro"] == []
+    assert form_state(roles.text)["metro"] == []
+
+
+async def test_an_unknown_metro_is_an_empty_page_not_an_error(
+    client: httpx.AsyncClient, corpus: Corpus
+) -> None:
+    """An unrecognised region returns nothing and answers 200 — it is not a 400.
+
+    ``metro`` and ``city`` are the two parameters with no closed vocabulary to validate
+    against: their values are strings the connectors stored, and any list this code could check
+    them against would be wrong again after the next run. So a stale bookmark naming a region
+    that was renamed — or switched off in ``config/regions.yaml`` and later merged away — shows
+    an empty result with the filter row still on screen to clear, rather than an error page.
+    """
+    companies = await client.get("/?metro=Atlantis")
+    assert companies.status_code == 200
+    assert company_ids(companies.text) == []
+    assert "No companies match these filters" in companies.text
+
+    roles = await client.get("/roles?metro=Atlantis")
+    assert roles.status_code == 200
+    assert job_ids(roles.text) == []
+    assert "No roles match these filters" in roles.text
+
+
+async def test_the_region_select_renders_the_facet_and_groups_the_cities(
+    client: httpx.AsyncClient, session: AsyncSession, corpus: Corpus
+) -> None:
+    """Region offers the database's metros; City is grouped into one ``<optgroup>`` per metro.
+
+    Both lists come from ``locations`` and not from ``config/regions.yaml`` (SPEC §11), so the
+    form cannot offer a value that returns nothing. The grouping is what makes the City select
+    usable once the config holds six regions instead of one, and it is rendered server-side:
+    there is no JavaScript in this form, and picking a region deliberately does not repopulate
+    the City list — the two filters compose as an ``AND``.
+    """
+    empire = await make_company(session, "Empire Data")
+    await make_location(session, empire, "Brooklyn", is_hq=True)
+    await make_location(session, empire, "Jersey City")
+    pike = await make_company(session, "Pike Systems")
+    await make_location(session, pike, "Seattle")
+    await session.commit()
+
+    body = (await client.get("/")).text
+
+    # Every metro in the database, alphabetically, and no group of its own: the metro *is* the
+    # wire value here.
+    assert select_options(body, "#f-metro") == [
+        (None, "Bay Area", "Bay Area"),
+        (None, "New York", "New York"),
+        (None, "Seattle", "Seattle"),
+    ]
+    # ...and every city under the region it belongs to, the New Jersey one included — the group
+    # is the metro, not the state.
+    assert select_options(body, "#f-city") == [
+        ("Bay Area", "Berkeley", "Berkeley"),
+        ("Bay Area", "Oakland", "Oakland"),
+        ("Bay Area", "San Jose", "San Jose"),
+        ("New York", "Brooklyn", "Brooklyn"),
+        ("New York", "Jersey City", "Jersey City"),
+        ("Seattle", "Seattle", "Seattle"),
+    ]
+    # The control is not decoration: what it offers is what the page then filters by.
+    assert company_ids((await client.get("/?metro=New+York")).text) == [empire.id]
+    assert company_ids((await client.get("/?metro=Seattle")).text) == [pike.id]
+
+
+async def test_a_city_name_in_two_states_carries_its_state_into_the_label(
+    client: httpx.AsyncClient, session: AsyncSession, corpus: Corpus
+) -> None:
+    """Two ``Newark``s: the label tells them apart, the submitted value stays the bare name.
+
+    ``uq_locations_city_state`` makes ``locations`` one row per ``(city, state)``, so a name
+    that repeats is by definition a name in two states — and without the state in the label the
+    user is choosing between two identical-looking options. The state reaches the label *only*:
+    the value is what every URL bookmarked before SPEC §12 Phase 7 holds, so the filter still
+    matches on the name alone and matches both, and Region is how you narrow it to one. A name
+    that occurs once keeps its bare label, which is all but one of them.
+    """
+    ironbound = await make_company(session, "Ironbound Labs")
+    await make_location(session, ironbound, "Newark")  # NJ, in the New York metro
+    dumbarton = await make_company(session, "Dumbarton Robotics")
+    await make_location(session, dumbarton, "Newark", state="CA", metro="Bay Area")
+    await session.commit()
+
+    options = select_options((await client.get("/")).text, "#f-city")
+
+    assert ("New York", "Newark", "Newark, NJ") in options
+    assert ("Bay Area", "Newark", "Newark, CA") in options
+    assert ("Bay Area", "Oakland", "Oakland") in options
+    assert set(company_ids((await client.get("/?city=Newark")).text)) == {
+        ironbound.id,
+        dumbarton.id,
+    }
+    assert company_ids((await client.get("/?city=Newark&metro=New+York")).text) == [ironbound.id]
+
+
+async def test_a_row_whose_hq_is_outside_the_filter_names_the_office_that_matched(
+    client: httpx.AsyncClient, session: AsyncSession
+) -> None:
+    """The region selector must not look like it leaks (SPEC §12 Phase 7, SPEC §9's row).
+
+    The collapsed row names the HQ city; the filter asks whether *any* office qualifies. So a
+    company headquartered in one metro with an office in another is a correct hit for either,
+    and a row showing only "San Francisco" in a list filtered to Seattle reads as a broken
+    filter. It has to say which office answered. Measured on the live Y Combinator data before
+    this landed: 19 of the 300 rows across the six single-region filters were unexplained.
+
+    The marker is strictly additive — it appears only when the row is not already naming the
+    matching city, and never at all when nothing geographic is filtered — so the default view
+    is untouched.
+    """
+    split = await make_company(session, "Split Harbour")
+    await make_location(session, split, "San Francisco", is_hq=True)
+    await make_location(session, split, "Seattle")
+    local = await make_company(session, "Pike Systems")
+    await make_location(session, local, "Seattle", is_hq=True)
+    await session.commit()
+
+    filtered = (await client.get("/?metro=Seattle")).text
+    assert set(company_ids(filtered)) == {split.id, local.id}
+    # The out-of-region HQ is still what the row leads with, and the office explains it.
+    assert "San Francisco" in filtered
+    assert "Seattle office" in filtered
+    # The company that is simply in Seattle says nothing extra — one marker, not two.
+    assert filtered.count("office</span>") == 1
+
+    # Filtered to the metro the HQ *is* in, the row has nothing to add.
+    assert "office</span>" not in (await client.get("/?metro=Bay+Area")).text
+    # And with nothing geographic filtered, no row may sprout a second city.
+    assert "office</span>" not in (await client.get("/")).text
+    # A city filter has always had the same shape and is treated the same way.
+    assert "Seattle office" in (await client.get("/?city=Seattle")).text
+
+
+async def test_load_more_carries_the_metro_filter(
+    client: httpx.AsyncClient, session: AsyncSession
+) -> None:
+    """Page 2 of a filtered region is still that region.
+
+    The "load more" URL is this request's URL with a new cursor
+    (``web.templating.query_string``), which is why a new filter parameter needed no change
+    there — and this is the test that says so, because the keyset cursor is only valid for the
+    query that minted it and a dropped filter would quietly paginate the whole database. The
+    region name contains a space, so it also pins that the value survives percent-encoding and
+    the HTML-escaping of the attribute it is rendered into.
+    """
+    total = 51
+    for index in range(total):
+        company = await make_company(session, f"Empire {index:03d}")
+        await make_location(session, company, "Brooklyn")
+    elsewhere = await make_company(session, "Bay Co")
+    await make_location(session, elsewhere, "Oakland")
+    await session.commit()
+
+    first = await client.get("/?metro=New+York")
+    follow_up = next_link(first.text)
+    assert follow_up is not None
+    assert "metro=New+York" in follow_up
+    assert "&amp;" not in follow_up  # unescaped by `next_link`, as a browser would
+
+    walked = flatten(await walk_pages(client, "/?metro=New+York"))
+    assert len(walked) == total == len(set(walked))
+    assert elsewhere.id not in walked
+
+
+async def test_the_metro_filter_reaches_both_the_company_and_the_role_list(
+    client: httpx.AsyncClient, session: AsyncSession
+) -> None:
+    """One dependency, two pages — SPEC §9's "same filter set", asserted mechanically.
+
+    ``metro`` is declared once, in ``web.filters.shared_filters``, and neither route was taught
+    about it. Had it been added to ``/``'s own dependency instead — the shorter change, and the
+    one a reader of ``companies.py`` alone would make — this is the assertion that would fail,
+    with the two views a parameter apart and the shared filter form submitting to a page that
+    ignores one of its controls.
+    """
+    empire = await make_company(session, "Empire Data")
+    await make_location(session, empire, "Brooklyn")
+    ny_role = await make_job(session, empire, "Data engineer", refresh=False)
+    bay = await make_company(session, "Bay Data")
+    await make_location(session, bay, "Oakland")
+    await make_job(session, bay, "Data engineer", refresh=False)
+    await refresh_denormalized(session)
+    await session.commit()
+
+    companies = await client.get("/?metro=New+York")
+    roles = await client.get("/roles?metro=New+York")
+
+    assert company_ids(companies.text) == [empire.id]
+    assert job_ids(roles.text) == [ny_role.id]
+    # ...and both pages render the one shared control with the region still selected, so the
+    # next submission from either is the same query.
+    assert form_state(companies.text)["metro"] == ["New York"]
+    assert form_state(roles.text)["metro"] == ["New York"]
 
 
 async def test_a_closed_role_is_badged_when_it_is_shown(
@@ -496,7 +726,7 @@ async def test_a_closed_role_is_badged_when_it_is_shown(
 #: which is what §9's one-EXISTS reading of the role filters demands, and a company with no
 #: ``user_notes`` row is what ``tracking=none`` means.
 EVERY_COMPANY_FILTER = (
-    "q=Northstar&city=Oakland&sector=robotics&stage=series_a&round=series_a"
+    "q=Northstar&city=Oakland&metro=Bay+Area&sector=robotics&stage=series_a&round=series_a"
     "&amount_min=1000000&amount_max=90000000&round_months=12"
     "&family=software&employment=full_time&seniority=senior&flexible=1"
     "&open_roles=1&tracking=none&sort=name"
@@ -522,6 +752,9 @@ async def test_the_filter_form_re_renders_its_own_active_state(
     assert state == {
         "q": ["Northstar"],
         "city": ["Oakland"],
+        # The two geography controls are separate and both echo — a Region that came back empty
+        # would widen the query on the next click without changing anything on screen.
+        "metro": ["Bay Area"],
         "sector": ["robotics"],
         "stage": ["series_a"],
         "round": ["series_a"],
@@ -583,6 +816,7 @@ async def test_an_unfiltered_page_pre_selects_nothing(
         "amount_max": [""],
         "round_months": [""],
         "city": [],
+        "metro": [],
         "sector": [],
         "stage": [],
         "round": [],
@@ -646,8 +880,11 @@ async def test_a_bad_url_renders_the_error_page(
     assert response.headers["content-type"].startswith("text/html")
     assert 'class="error-page"' in response.text
     assert f"<h1>{status}</h1>" in response.text
-    # Not FastAPI's raw 422 JSON blob, and the chrome is still there to navigate away with.
-    assert '<a class="brand"' in response.text
+    # Not FastAPI's raw 422 JSON blob, and the chrome is still there to navigate away with —
+    # carrying the name derived from config/regions.yaml rather than one written into the
+    # template (SPEC §11, §12 Phase 7). The derivation itself is pinned in tests/test_regions.py;
+    # this is the assertion that the templates still call it.
+    assert f'<a class="brand" href="/">{site_name()}</a>' in response.text
 
 
 @pytest.mark.parametrize(
@@ -658,6 +895,7 @@ async def test_a_bad_url_renders_the_error_page(
         "/?q=" + "a" * 500,
         "/?q=%00",  # a NUL: Postgres text cannot hold one at all
         "/?city=%00",
+        "/?metro=%00",
         "/?sector=%00",
         "/roles?q=%00",
         "/?q=+++",
@@ -681,7 +919,7 @@ async def test_a_blank_form_submission_is_the_default_view(
     client: httpx.AsyncClient, corpus: Corpus
 ) -> None:
     """A GET form submits every field it has, including the empty ones (``?q=&stage=``)."""
-    blank = "/?q=&city=&sector=&stage=&round=&amount_min=&amount_max=&round_months=&sort="
+    blank = "/?q=&city=&metro=&sector=&stage=&round=&amount_min=&amount_max=&round_months=&sort="
     assert company_ids((await client.get(blank)).text) == company_ids((await client.get("/")).text)
 
 

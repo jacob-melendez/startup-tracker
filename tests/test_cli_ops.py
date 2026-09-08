@@ -1,49 +1,78 @@
-"""``cli.py stats`` and ``cli.py merge-review`` end to end (SPEC §12 Phase 6, §8, §7.2).
+"""``cli.py stats``, ``merge-review`` and ``sync-regions`` end to end (SPEC §12 Phases 6 and 7,
+§8, §7.2, §11).
 
-Both commands are read-mostly reports over the local database, so they are driven the way an
+All three are operator-facing commands over the local database, so they are driven the way an
 operator drives them — through ``CliRunner`` against the disposable Postgres, with answers piped
 in — rather than by calling their helpers. What is asserted is the *contract* a reader or a
 script depends on: which sections exist, that a number in the report is the number in the table,
-that the database password never reaches stdout, and that every review key does what the prompt
-says it does. Nothing here touches the network; neither command can (SPEC §2).
+that the database password never reaches stdout, that every review key does what the prompt says
+it does, and that a sweep reports exactly what it wrote. Nothing here touches the network; none
+of the three can (SPEC §2), and ``sync-regions`` is held to that with the network *armed to
+fail* rather than merely unused.
 
-Every test is a **sync** function, as ``tests/test_cli.py``'s are, because both commands call
-``asyncio.run`` and that cannot happen inside pytest-asyncio's running loop. Database setup and
-read-back therefore go through :func:`db`, which opens its own engine and loop — the same
+Every test is a **sync** function, as ``tests/test_cli.py``'s are, because all three commands
+call ``asyncio.run`` and that cannot happen inside pytest-asyncio's running loop. Database setup
+and read-back therefore go through :func:`db`, which opens its own engine and loop — the same
 arrangement that file uses for its ``sync-contacts`` tests.
 
 ``stats`` reads ``now`` from the clock rather than taking it as an argument, so fixtures here are
 placed relative to that same clock. The microsecond-exact edge of the 7-day window belongs to
 ``tests/test_merge.py``, which can inject a fixed one; what this file checks is that the command
 carries a live clock through to the query at all.
+
+The geography ``sync-regions`` reconciles against is read out of ``config/regions.yaml`` by the
+test itself (:func:`configured_place`) rather than written out here: making a stored row agree
+with that file is the command's whole job, and a city name repeated in the test would be a
+second opinion about what the file says. The metros a fixture row is *ingested* with are
+invented instead, because that is what they are — labels an older config, or another config,
+once gave a city, which the shipped file need never have contained.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 import structlog
-from sqlalchemy import func, select, text
+from respx.models import AllMockedAssertionError
+from sqlalchemy import event, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typer.testing import CliRunner, Result
 
 import cli
 from db import enums
-from db.models import Base, Company, Contact, Job, JobBookmark, MergeCandidate, UserNote
+from db.models import (
+    Base,
+    Company,
+    Contact,
+    FetchRun,
+    Job,
+    JobBookmark,
+    Location,
+    MergeCandidate,
+    UserNote,
+)
 from db.queries import (
     CONSECUTIVE_FAILURE_ALERT,
     STATS_WINDOW_DAYS,
     CompanySummary,
     MergeCandidateRow,
 )
-from db.session import dispose_engine
-from ingest.config import UNIMPLEMENTED_CONNECTORS, load_connectors_config
+from db.session import dispose_engine, get_session_factory
+from ingest.config import (
+    UNIMPLEMENTED_CONNECTORS,
+    RegionCity,
+    load_connectors_config,
+    load_regions_config,
+)
 from ingest.contacts import (
     constructed_linkedin_company_url,
     people_search_url,
@@ -61,6 +90,9 @@ from tests.support_web import (
     make_run,
     make_sector,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
+README = ROOT / "README.md"
 
 #: A password that must never appear on stdout. Postgres is on trust auth here, so a URL
 #: carrying it still connects — which is what makes the assertion a real one rather than a
@@ -192,6 +224,27 @@ def entry(output: str, heading: str, label: str) -> str:
     return " ".join(matches[0].split())
 
 
+#: The bare-word heading of ``stats``' per-metro rollup. Matched on a wildcard word rather than
+#: on the real one so that the exact wording is pinned in exactly *one* test — the README
+#: reconciliation below — and every other assertion in this file keeps holding whichever way
+#: that one word is settled between the command and the document.
+_METRO_HEADING = re.compile(r"^companies\s+\w+\s+metro\b")
+
+
+def metro_section(output: str) -> tuple[str, list[str]]:
+    """SPEC §12 Phase 7's rollup as ``(heading line, rows)``, each row whitespace-collapsed.
+
+    The heading comes back with the rows because it is part of what the block promises: the
+    counts deliberately double up a company standing in two metros, and the note on the heading
+    is the only thing that stops a reader trying to reconcile this block with the ``companies``
+    total printed above it.
+    """
+    headings = [line for line in output.splitlines() if _METRO_HEADING.match(line)]
+    assert len(headings) == 1, f"expected one per-metro heading, found {headings}"
+    rows = sections(output)[headings[0].split("  ")[0]]
+    return headings[0], [" ".join(row.split()) for row in rows]
+
+
 def summary_line(output: str) -> str:
     lines = [line for line in output.splitlines() if line.startswith("merge-review  ")]
     assert len(lines) == 1, output
@@ -201,12 +254,15 @@ def summary_line(output: str) -> str:
 # ============================================================================= stats
 
 
-def test_stats_prints_the_three_sections_on_an_empty_database(runner: CliRunner) -> None:
-    """SPEC §12 Phase 6 names three things; an empty database must still print all three.
+def test_stats_prints_every_section_on_an_empty_database(runner: CliRunner) -> None:
+    """SPEC §12 Phase 6 names three things and Phase 7 adds a fourth; an empty database must
+    still print all four.
 
     Zero is an answer. A report that dropped a section when its numbers were all zero would
     make "no companies yet" look exactly like "the section is broken", and a freshly migrated
-    database is the first thing this command is pointed at.
+    database is the first thing this command is pointed at. The rollup has no zero to print —
+    it lists the metros the database *has* — so it says in words that there are none, which is
+    the same promise kept a different way.
     """
     result = invoke(runner, "stats")
 
@@ -217,6 +273,7 @@ def test_stats_prints_the_three_sections_on_an_empty_database(runner: CliRunner)
     assert entry(result.stdout, "rows", "jobs") == "jobs 0 open, 0 closed"
     assert entry(result.stdout, window, "companies added") == "companies added 0"
     assert entry(result.stdout, window, "jobs added") == "jobs added 0"
+    assert metro_section(result.stdout)[1] == [f"{cli.NOTHING} no company has a location yet"]
 
 
 def test_stats_counts_are_the_rows_that_are_there(runner: CliRunner) -> None:
@@ -285,6 +342,63 @@ def test_stats_counts_are_the_rows_that_are_there(runner: CliRunner) -> None:
     assert entry(out, "rows", "merge candidates") == "merge candidates 1 unresolved, 0 resolved"
     assert entry(out, "rows", "fetch runs") == "fetch runs 1"
     assert entry(out, "rows", "notes / bookmarks") == "notes / bookmarks 1 / 1"
+
+
+def test_stats_counts_a_company_once_in_every_metro_it_stands_in(runner: CliRunner) -> None:
+    """SPEC §12 Phase 7's operational question — "did the new metro ingest anything?" — plus the
+    one thing about the answer a reader has to be told: the counts overlap.
+
+    Two companies, three cities, two metros. ``Roving`` has an office in each metro, ``Rooted``
+    has two in one of them. So a block built on ``count(*)`` would read 3 where the answer is 2,
+    and one that partitioned the companies instead of counting them per metro would drop
+    ``Roving`` from one of its two lines. Both numbers are asserted against the ``rows`` section
+    above them as well: two companies producing three metro-counts is the overlap made visible,
+    and the heading has to say so or the two blocks look like they contradict each other.
+
+    The busier metro is also the alphabetically later one, so the order is evidence that the
+    sort is by count descending rather than by name.
+    """
+
+    async def arrange(session: AsyncSession) -> None:
+        roving = await make_company(session, "Roving", domain="roving.example")
+        await make_location(session, roving, "Seattle", is_hq=True)
+        await make_location(session, roving, "Boston")
+        rooted = await make_company(session, "Rooted", domain="rooted.example")
+        await make_location(session, rooted, "Seattle", is_hq=True)
+        await make_location(session, rooted, "Bellevue")
+
+    db(arrange)
+
+    out = invoke(runner, "stats").stdout
+    heading, rows = metro_section(out)
+
+    assert rows == ["Seattle 2", "Boston 1"]
+    assert "counts in both" in heading, heading
+    assert entry(out, "rows", "companies").startswith("companies 2 ")
+    assert entry(out, "rows", "locations") == "locations 3"
+
+
+def test_the_readme_stats_sample_names_the_metro_section_the_command_prints(
+    runner: CliRunner,
+) -> None:
+    """The README's ``stats`` sample is the documented shape of this report, and the heading is
+    the part of it an operator retypes: ``stats | grep 'companies by metro'`` returns the whole
+    section or nothing at all, with no third outcome to warn them.
+
+    So the name is taken from a real run and compared with every place the README spells it —
+    the sample block and the prose that explains it. Which word joins "companies" to "metro" is
+    not what is being asserted; that both files chose the same one is.
+    """
+    heading, _ = metro_section(invoke(runner, "stats").stdout)
+    printed = heading.split("  ")[0]
+
+    written = set(re.findall(r"companies \w+ metro", README.read_text(encoding="utf-8")))
+
+    assert written, "README.md no longer shows the per-metro section of `cli.py stats` at all"
+    assert written == {printed}, (
+        f"`cli.py stats` prints {printed!r} and README.md says {sorted(written)}; the two have "
+        "to agree, and either file is a fine place to make them"
+    )
 
 
 def test_stats_never_prints_the_database_password(runner: CliRunner) -> None:
@@ -919,3 +1033,346 @@ def test_a_pair_taken_by_an_earlier_decision_is_skipped_not_crashed(runner: CliR
     # Exactly one pair survives, and it is the (a, c) one the reviewer skipped.
     remaining = db(read)
     assert {remaining.company_id_a, remaining.company_id_b} == {a_id, c_id}
+
+
+# ======================================================= sync-regions (SPEC §11, §12 Phase 7)
+
+#: The metro a fixture row was *ingested* with, before the config said otherwise. Invented, and
+#: deliberately something ``config/regions.yaml`` does not configure: this is the label the sweep
+#: exists to correct, and one the config also knew would collapse "the row changed" and "the row
+#: was right all along" into the same assertion.
+STALE_METRO = "Former Metro"
+#: The other column the sweep writes, planted equally stale. A three-letter code rather than a
+#: fanciful one, because this is what a real correction to a region's ``country:`` looks like:
+#: the same country, written the way an older file wrote it.
+STALE_COUNTRY = "USA"
+#: A stored place no enabled region claims — a city dropped from the file, one whose region was
+#: switched off, or one a connector reported from outside every configured region.
+UNCONFIGURED_CITY = "Nowhere Hollow"
+UNCONFIGURED_STATE = "ZZ"
+UNCONFIGURED_METRO = "Elsewhere"
+
+
+def configured_place() -> RegionCity:
+    """The first city of the first enabled region of the shipped ``config/regions.yaml``.
+
+    Read out of the file the command itself reads, rather than written out here. The whole
+    contract of ``sync-regions`` is that a stored row ends up agreeing with that file, so a city
+    and a metro spelled into this module would be a second, private opinion of what the file
+    says — and the test would keep passing after the config's first entry changed underneath it.
+    """
+    return load_regions_config().cities[0]
+
+
+async def place_company(
+    session: AsyncSession,
+    name: str,
+    *,
+    city: str,
+    state: str,
+    metro: str,
+    country: str | None = None,
+) -> None:
+    """A company with one office, stored with the labels some past ingest run gave that city.
+
+    ``country`` is set only where a case needs a *stale* one; left alone the column takes its
+    server default, which is what every ordinary row carries.
+    """
+    company = await make_company(session, name, domain=f"{name.lower()}.example")
+    location = await make_location(session, company, city, state=state, metro=metro, is_hq=True)
+    if country is not None:
+        location.country = country
+        await session.flush()
+
+
+def stored_labels() -> dict[tuple[str, str], tuple[str, str]]:
+    """``(city, state) -> (metro, country)`` for every ``locations`` row.
+
+    Keyed on the pair rather than on the city alone because ``uq_locations_city_state`` is on
+    the pair: one city name in two states is two rows, and a sweep that collapsed them would
+    otherwise read here as a sweep that did nothing.
+
+    Both written columns come back together, since those two are exactly what the sweep may
+    change (``cli.py sync_regions_once``). Reading only the metro would leave every case here
+    blind to a sweep that quietly rewrote a country as well — and blind, in the country case
+    below, to one that reported the change and then wrote nothing.
+    """
+
+    async def read(session: AsyncSession) -> dict[tuple[str, str], tuple[str, str]]:
+        rows = await session.execute(
+            select(Location.city, Location.state, Location.metro, Location.country)
+        )
+        return {(city, state): (metro, country) for city, state, metro, country in rows}
+
+    return db(read)
+
+
+def sync_regions_line(output: str) -> str:
+    """The one summary line, the way :func:`summary_line` picks ``merge-review``'s out."""
+    lines = [line for line in output.splitlines() if line.startswith("sync-regions  ")]
+    assert len(lines) == 1, output
+    return lines[0]
+
+
+async def probe_the_trap() -> None:
+    """One genuine outbound request, to prove a ``respx`` trap is armed rather than inert.
+
+    Without it, an empty call list is equally good evidence that the mock never patched anything
+    — which is the one way an assertion that a command fetched nothing could pass while the
+    command was fetching.
+    """
+    async with httpx.AsyncClient() as outbound:
+        with pytest.raises(AllMockedAssertionError):
+            await outbound.get("https://example.invalid/probe")
+
+
+def test_sync_regions_relabels_a_city_whose_configured_metro_changed(runner: CliRunner) -> None:
+    """The gap SPEC §12 Phase 7 leaves and this command closes: editing ``config/regions.yaml``
+    changes what is *ingested*, and nothing about the rows already stored.
+
+    The row is planted carrying a metro the config does not configure, which is what a city
+    moved between regions looks like from the database's side. Afterwards it carries the
+    configured metro — and the report names the *move*, not just the destination, because an
+    operator reviewing a config edit is checking what it takes away from a row.
+
+    ``country`` is planted stale as well, and it is the field with no other coverage: it is the
+    second and last column the sweep writes, it changes for a different reason than the metro
+    does (a region's own ``country:`` being corrected, not a city being re-scoped), and
+    ``_change_lines`` therefore reports it as a separate move on the same line. Asserting the
+    line *and* reading the column back is what distinguishes a sweep that renamed the country
+    from one that only said it would.
+    """
+    place = configured_place()
+
+    async def arrange(session: AsyncSession) -> None:
+        await place_company(
+            session,
+            "Rooted",
+            city=place.city,
+            state=place.state,
+            metro=STALE_METRO,
+            country=STALE_COUNTRY,
+        )
+
+    db(arrange)
+
+    result = invoke(runner, "sync-regions")
+
+    assert result.exit_code == 0, result.output
+    where = f"{place.city}, {place.state}"
+    assert entry(result.stdout, "relabelled", where) == (
+        f"{where} metro {STALE_METRO!r} → {place.metro!r}, "
+        f"country {STALE_COUNTRY!r} → {place.country!r}"
+    )
+    assert sync_regions_line(result.stdout) == (
+        "sync-regions  locations=1  relabelled=1  unconfigured=0"
+    )
+    assert stored_labels() == {(place.city, place.state): (place.metro, place.country)}
+
+    # Running it twice is running it once, and it says so out loud: on a database of a few dozen
+    # cities three zeroes read as a command that failed to find anything to do.
+    again = invoke(runner, "sync-regions")
+
+    assert sync_regions_line(again.stdout) == (
+        "sync-regions  locations=1  relabelled=0  unconfigured=0  (already in sync)"
+    )
+    assert stored_labels() == {(place.city, place.state): (place.metro, place.country)}
+
+
+def test_sync_regions_leaves_a_city_in_no_enabled_region_alone_and_reports_it(
+    runner: CliRunner,
+) -> None:
+    """SPEC §2 makes the database the historical record, so a stored city no enabled region
+    claims is a question for a person — add it to a region, switch a region back on, or leave it
+    as history — and never a row for a relabelling sweep to rewrite or delete on its own.
+
+    Printed rather than counted: a number alone would say how many decisions are waiting without
+    saying which. And it is planted beside a row the same sweep *does* relabel, so "left alone"
+    cannot pass on the strength of the sweep having done nothing at all.
+    """
+    place = configured_place()
+
+    async def arrange(session: AsyncSession) -> None:
+        await place_company(
+            session, "Rooted", city=place.city, state=place.state, metro=STALE_METRO
+        )
+        await place_company(
+            session,
+            "Adrift",
+            city=UNCONFIGURED_CITY,
+            state=UNCONFIGURED_STATE,
+            metro=UNCONFIGURED_METRO,
+        )
+
+    db(arrange)
+
+    result = invoke(runner, "sync-regions")
+
+    assert result.exit_code == 0, result.output
+    orphan = f"{UNCONFIGURED_CITY}, {UNCONFIGURED_STATE}"
+    assert entry(result.stdout, "in no enabled region", orphan) == (
+        f"{orphan} metro {UNCONFIGURED_METRO!r}"
+    )
+    notice = next(
+        line for line in result.stdout.splitlines() if line.startswith("in no enabled region")
+    )
+    assert "left as ingested" in notice and "SPEC §2" in notice, notice
+    assert sync_regions_line(result.stdout) == (
+        "sync-regions  locations=2  relabelled=1  unconfigured=1"
+    )
+    # The configured row moved; the unconfigured one kept every label it was ingested with.
+    assert stored_labels() == {
+        (place.city, place.state): (place.metro, place.country),
+        (UNCONFIGURED_CITY, UNCONFIGURED_STATE): (UNCONFIGURED_METRO, "US"),
+    }
+
+
+def test_sync_regions_dry_run_reports_the_move_in_the_future_tense_and_writes_nothing(
+    runner: CliRunner,
+) -> None:
+    """``--dry-run`` is how a config edit is reviewed before it is applied, so the counts have to
+    be the real ones while the database is untouched.
+
+    The heading is asserted too, and it is not decoration: a block headed "relabelled" listing
+    rows that were not relabelled is the one misreading of this report that costs the operator a
+    second sweep to discover.
+    """
+    place = configured_place()
+
+    async def arrange(session: AsyncSession) -> None:
+        await place_company(
+            session, "Rooted", city=place.city, state=place.state, metro=STALE_METRO
+        )
+
+    db(arrange)
+
+    result = invoke(runner, "sync-regions", "--dry-run")
+
+    assert result.exit_code == 0, result.output
+    where = f"{place.city}, {place.state}"
+    assert entry(result.stdout, "would relabel", where) == (
+        f"{where} metro {STALE_METRO!r} → {place.metro!r}"
+    )
+    assert "relabelled" not in sections(result.stdout)
+    assert sync_regions_line(result.stdout) == (
+        "sync-regions  locations=1  relabelled=1  unconfigured=0  (dry run — nothing written)"
+    )
+    assert stored_labels() == {(place.city, place.state): (STALE_METRO, "US")}
+
+
+def test_sync_regions_commits_one_changed_row_at_a_time_and_never_an_unchanged_one(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--batch-size`` sizes the keyset *page*, not the transaction: the commit is per changed
+    row, and a row already in sync is not written at all.
+
+    Both halves are load-bearing and neither shows up in the report, which is why they need an
+    assertion of their own. A concurrent ingest run upserts the same cities in *its* order
+    (``ingest.pipeline._upsert_locations``, which sorts for the same reason), and an ``UPDATE``
+    holds its row lock until the transaction ends — so committing a whole page at once would
+    hold write locks on every row of it and let the two sides deadlock. It is also what makes an
+    interrupted sweep keep the rows it had already relabelled. The second half is why the sweep
+    is read-only on a database that agrees with the config, rather than merely reporting zero
+    while rewriting every row with the value it already had.
+
+    The counts are what makes this a test of the commits rather than of the totals: three rows,
+    two of them stale, one page. Every number the command prints is identical whichever way the
+    transaction is drawn.
+    """
+    place = configured_place()
+    second = load_regions_config().cities[1]
+
+    async def arrange(session: AsyncSession) -> None:
+        await place_company(
+            session, "Rooted", city=place.city, state=place.state, metro=STALE_METRO
+        )
+        await place_company(
+            session, "Moved", city=second.city, state=second.state, metro=STALE_METRO
+        )
+        # Already agreeing with the config: nothing to write, so nothing to commit.
+        await place_company(
+            session,
+            "Settled",
+            city=UNCONFIGURED_CITY,
+            state=UNCONFIGURED_STATE,
+            metro=UNCONFIGURED_METRO,
+        )
+
+    db(arrange)
+    commits = 0
+
+    # ``cli.py`` resolves this name at call time, so patching it there is what the sweep sees;
+    # the real one is taken from its own module, which is the same object.
+    def counting_factory() -> Callable[[], AsyncSession]:
+        maker = get_session_factory()
+
+        def make() -> AsyncSession:
+            session = maker()
+
+            def count_commit(_: object) -> None:
+                nonlocal commits
+                commits += 1
+
+            event.listen(session.sync_session, "after_commit", count_commit)
+            return session
+
+        return make
+
+    monkeypatch.setattr(cli, "get_session_factory", counting_factory)
+
+    result = invoke(runner, "sync-regions")
+
+    assert result.exit_code == 0, result.output
+    assert sync_regions_line(result.stdout) == (
+        "sync-regions  locations=3  relabelled=2  unconfigured=1"
+    )
+    assert commits == 2
+    assert stored_labels() == {
+        (place.city, place.state): (place.metro, place.country),
+        (second.city, second.state): (second.metro, second.country),
+        (UNCONFIGURED_CITY, UNCONFIGURED_STATE): (UNCONFIGURED_METRO, "US"),
+    }
+
+
+def test_sync_regions_fetches_nothing_and_records_no_fetch_run(runner: CliRunner) -> None:
+    """The two halves of "pure local reconciliation" (SPEC §2, §7.2), each asserted against the
+    thing that would record a breach.
+
+    ``sync_regions_once`` reads a YAML file and writes ``locations``; nothing in that path has
+    any business opening a socket, so the whole invocation runs inside a ``respx`` mock with no
+    routes registered, where a real request raises rather than escaping to the network — and the
+    trap is then probed, because an empty call list proves nothing if the mock was never armed.
+
+    And ``fetch_runs`` stays empty. SPEC §7.2's "every run writes a row" is about connector runs;
+    a sweep that fetched nothing is not one, and a row here would put a source's name on ``/runs``
+    and in ``stats`` for work no source did. The sweep is given something to do either way, so
+    neither assertion can pass because the command bailed out early.
+    """
+    place = configured_place()
+
+    async def arrange(session: AsyncSession) -> None:
+        await place_company(
+            session, "Rooted", city=place.city, state=place.state, metro=STALE_METRO
+        )
+        await place_company(
+            session,
+            "Adrift",
+            city=UNCONFIGURED_CITY,
+            state=UNCONFIGURED_STATE,
+            metro=UNCONFIGURED_METRO,
+        )
+
+    db(arrange)
+
+    with respx.mock(assert_all_called=False) as router:
+        result = invoke(runner, "sync-regions")
+
+        assert result.exit_code == 0, result.output
+        assert list(router.calls) == []
+        asyncio.run(probe_the_trap())
+
+    assert sync_regions_line(result.stdout) == (
+        "sync-regions  locations=2  relabelled=1  unconfigured=1"
+    )
+    assert stored_labels()[(place.city, place.state)] == (place.metro, place.country)
+    assert db(lambda s: s.scalar(select(func.count()).select_from(FetchRun))) == 0

@@ -37,11 +37,44 @@
            placeholder="name, thesis{% if is_roles %}, role title{% endif %}">
   </div>
 
+  {#- Region comes before City because it is the broader geography and reads as the thing you
+      pick first. It is a filter in this row, not a global scope switch: a switch would need
+      per-user state, which §1 rules out for v1, and would have to be reconciled with every
+      bookmarked URL and keyset cursor. Being a filter, it composes — `metro` and `city` are
+      independent AND predicates, so picking a region does not repopulate the City select and
+      does not need to. The options come from `locations`, not from `config/regions.yaml`, so
+      the form never offers a region that would return nothing (§11). -#}
+  <div class="field">
+    <label for="f-metro">Region</label>
+    <select id="f-metro" name="metro" multiple size="4">
+      {%- for metro in facets.metros %}
+      <option value="{{ metro }}"{% if metro in filters.metros %} selected{% endif %}>{{ metro }}</option>
+      {%- endfor %}
+    </select>
+  </div>
+
+  {#- Grouped by metro because six regions' worth of cities in one flat list is not a control
+      anyone can use (§12 Phase 7). Server-rendered grouping — there is no JavaScript here, as
+      everywhere else in this form. `groupby` sorts as it groups, which the facet's own
+      `ORDER BY metro, city` has already done; it is what guarantees each group is contiguous.
+
+      The option *value* stays the bare city name, so every URL bookmarked before this phase
+      still means what it meant. The state reaches the label only, and only for a name that
+      occurs more than once: `uq_locations_city_state` makes one row per (city, state), so a
+      repeated name is by definition a name in two states, and the two would otherwise be two
+      identical-looking options. Such an option still filters on the name alone and matches
+      both — Region is how you narrow it. -#}
   <div class="field">
     <label for="f-city">City</label>
+    {%- set city_names = facets.cities | map(attribute='city') | list %}
     <select id="f-city" name="city" multiple size="4">
-      {%- for city in facets.cities %}
-      <option value="{{ city }}"{% if city in filters.cities %} selected{% endif %}>{{ city }}</option>
+      {%- for metro, cities in facets.cities | groupby('metro') %}
+      <optgroup label="{{ metro }}">
+        {%- for city in cities %}
+        {%- set shown = city.city ~ ', ' ~ city.state if city_names.count(city.city) > 1 else city.city %}
+        <option value="{{ city.city }}"{% if city.city in filters.cities %} selected{% endif %}>{{ shown }}</option>
+        {%- endfor %}
+      </optgroup>
       {%- endfor %}
     </select>
   </div>

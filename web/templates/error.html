@@ -8,7 +8,7 @@
   It extends `base.html` on purpose: someone who followed a stale bookmark should land on a
   page with the navigation still on it, not on a bare JSON blob.
 -#}
-{% block title %}{{ status_code }} · Bay Area Startup Tracker{% endblock %}
+{% block title %}{{ status_code }} · {{ site_name() }}{% endblock %}
 
 {% block content %}
   <div class="error-page">

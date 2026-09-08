@@ -11,12 +11,16 @@ Three things live here, and all three exist so the four web test modules cannot 
   :func:`make_round` refresh the denormalized ``companies`` columns of SPEC §5 before
   returning, because the default sort (``latest_job_posted_at``), the open-role count and the
   ``open_roles`` filter all read those columns — a factory that left them stale would test a
-  database state the ingest pipeline never produces.
+  database state the ingest pipeline never produces. :func:`make_location` places a company in
+  a *real* metro of ``config/regions.yaml`` (see :data:`CITY_REGIONS`), which is what the
+  region filter of SPEC §12 Phase 7 needs to be tested against anything but itself.
 * Markup helpers. The rendered "Load more" URL is HTML-escaped (``&amp;``), so following it
   needs :func:`html.unescape`; :func:`walk_pages` does that and walks a keyset list to
   exhaustion the way a user clicking the button would. :func:`form_state` reads a rendered
   form back as the submission a browser would make from it, so a test can pin what a control
-  *does* instead of the attribute spelling that makes it do so.
+  *does* instead of the attribute spelling that makes it do so, and :func:`select_options`
+  reads one ``<select>`` back as the choices it offers — the grouping and the labels
+  :func:`form_state` deliberately throws away.
 
 Nothing here touches the network — the app under test never makes an outbound call (SPEC §2).
 """
@@ -67,6 +71,53 @@ ACCEPT_HTML = "text/html,application/xhtml+xml"
 
 #: Unique ``jobs.external_id`` values; the table's uniqueness is (company_id, external_id).
 _JOB_SEQUENCE = itertools.count(1)
+
+#: ``city -> (state, metro)`` for the cities the web tests place companies in.
+#:
+#: SPEC §12 Phase 7 made the metro a filter of its own, so these suites need companies in more
+#: than one region — and geography invented per test would let a metro predicate pass while
+#: matching on the wrong column entirely. Every entry is a real city of a real metro of
+#: ``config/regions.yaml``, except the handful marked below, which are real cities that config
+#: does not list: the facets read ``locations``, not the config, and SPEC §2 keeps a row whose
+#: city the config never named or no longer names. ``tests/`` is exempt from
+#: ``tests/test_regions.py``'s literal guard for exactly this reason — a fixture that had to
+#: invent its metros could not check that the real ones group correctly.
+#:
+#: One name deliberately resolves to only one of its two real regions: ``Newark`` is NJ in the
+#: New York metro *and* CA in the Bay Area, and a mapping from a bare city name cannot hold
+#: both — the same ambiguity ``RegionsConfig.lookup_city_name`` answers with ``None`` rather
+#: than a guess. The commoner one is here; a caller that means the other spells out ``state``
+#: and ``metro``, which is what the same-name facet test does.
+CITY_REGIONS: dict[str, tuple[str, str]] = {
+    "San Francisco": ("CA", "Bay Area"),
+    "South San Francisco": ("CA", "Bay Area"),
+    "Oakland": ("CA", "Bay Area"),
+    "Berkeley": ("CA", "Bay Area"),
+    "San Jose": ("CA", "Bay Area"),
+    "Palo Alto": ("CA", "Bay Area"),
+    "Mountain View": ("CA", "Bay Area"),
+    "Fremont": ("CA", "Bay Area"),
+    "Emeryville": ("CA", "Bay Area"),
+    "Alameda": ("CA", "Bay Area"),  # a Bay Area city the shipped config does not list
+    "New York": ("NY", "New York"),
+    "Brooklyn": ("NY", "New York"),
+    "Long Island City": ("NY", "New York"),
+    # The two that make the metro more than a synonym for the state: a region crosses state
+    # lines, so a predicate reading `locations.state` would get these wrong and only these.
+    "Jersey City": ("NJ", "New York"),
+    "Newark": ("NJ", "New York"),
+    "Seattle": ("WA", "Seattle"),
+    "Bellevue": ("WA", "Seattle"),
+    "Boston": ("MA", "Boston"),
+    "Cambridge": ("MA", "Boston"),
+    "Los Angeles": ("CA", "Los Angeles"),
+    "Santa Monica": ("CA", "Los Angeles"),
+    "Austin": ("TX", "Austin"),
+}
+
+#: Where an unlisted city goes. Every caller written before SPEC §12 Phase 7 passed a Bay Area
+#: city and no region at all, so this is what those calls have always meant.
+_DEFAULT_REGION = ("CA", "Bay Area")
 
 
 # ------------------------------------------------------------------------------ the client
@@ -204,11 +255,24 @@ async def make_location(
     company: Company,
     city: str,
     *,
-    state: str = "CA",
-    metro: str = "Bay Area",
+    state: str | None = None,
+    metro: str | None = None,
     is_hq: bool = False,
 ) -> Location:
-    """Link ``company`` to ``city``, creating the ``locations`` row on first use."""
+    """Link ``company`` to ``city``, creating the ``locations`` row on first use.
+
+    The state and the metro come from :data:`CITY_REGIONS`, so a test says only *where* the
+    company is and the row it gets agrees with ``config/regions.yaml`` — a Brooklyn office
+    really does carry the New York metro, and a Jersey City one carries it too. Pass either
+    explicitly to place a city the table does not hold, or to place the second ``Newark``.
+
+    The lookup is by city name alone, which is also why ``uq_locations_city_state`` is queried
+    on the pair: two calls naming the same city in different states are two ``locations`` rows,
+    and that is precisely the state of the database the City select has to disambiguate.
+    """
+    known_state, known_metro = CITY_REGIONS.get(city, _DEFAULT_REGION)
+    state = known_state if state is None else state
+    metro = known_metro if metro is None else metro
     location = await session.scalar(
         select(Location).where(Location.city == city, Location.state == state)
     )
@@ -429,6 +493,32 @@ def _textarea_value(node: Node) -> str:
     """A textarea's submitted value: its text, minus the one leading newline HTML swallows."""
     text = node.text()
     return text[1:] if text.startswith("\n") else text
+
+
+def select_options(markup: str, selector: str) -> list[tuple[str | None, str, str]]:
+    """One ``<select>``'s options, in document order, as ``(group, value, label)``.
+
+    The complement of :func:`form_state`, which answers what a form *submits* and so discards
+    exactly what this returns: the ``<optgroup>`` an option sits in and the text on screen.
+    Both carry meaning in the City select of SPEC §12 Phase 7 — the options are grouped one
+    group per metro because six regions' worth of cities in a flat list is not a control anyone
+    can use, and a label may append a state that its value deliberately does not carry, so that
+    two same-named cities are distinguishable while the filter still matches on the name alone.
+    ``group`` is ``None`` for an option outside any group, which is every option of every other
+    select in the form.
+    """
+    node = HTMLParser(markup).css_first(selector)
+    assert node is not None, f"no {selector} in this response"
+    found: list[tuple[str | None, str, str]] = []
+    for option in node.css("option"):
+        parent = option.parent
+        group = (
+            parent.attributes.get("label")
+            if parent is not None and parent.tag == "optgroup"
+            else None
+        )
+        found.append((group, _option_value(option), option.text().strip()))
+    return found
 
 
 async def walk_pages(

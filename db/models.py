@@ -187,9 +187,10 @@ class Company(Base):
 
 
 class Location(Base):
-    """A city. ``metro`` is the expansion hook (``'Bay Area'`` for v1, SPEC §5); its value
-    comes from ``config/regions.yaml`` at ingest time — there is no database default on
-    purpose, so no Bay-Area-specific logic lives in the schema."""
+    """A city. ``metro`` is the expansion hook (SPEC §5): its value comes from
+    ``config/regions.yaml`` at ingest time — there is no database default on purpose, so no
+    region-specific logic lives in the schema and adding a metro is a config edit, not a
+    migration."""
 
     __tablename__ = "locations"
 

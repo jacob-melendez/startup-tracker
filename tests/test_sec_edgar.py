@@ -507,8 +507,24 @@ def test_to_records_skips_pooled_investment_funds(connector: SecEdgarConnector) 
 
 
 def test_to_records_skips_an_issuer_outside_the_region(connector: SecEdgarConnector) -> None:
-    """Lovable Labs matched "Palo Alto" through a director's address; the issuer is in Boston."""
-    filing = make_filing("lovable_labs_D.xml", accession=LOVABLE[0], cik=LOVABLE[1])
+    """Lovable Labs matched "Palo Alto" through a director's address; the issuer's own is not.
+
+    The recorded issuer address is Boston MA, which SPEC §12 Phase 7 made a configured city, so
+    the *issuer's* address is moved out of every region here rather than the fixture being
+    re-recorded. Only the issuer block is rewritten (its twelve-space indent is unique in the
+    file): the director in Palo Alto stays exactly where the filing puts him, because he is the
+    reason the phrase search surfaced this filing at all and the whole point of the test is that
+    a related person's in-region address never carries the company in.
+    """
+    xml = fixture_text("lovable_labs_D.xml").replace(
+        "            <city>Boston</city>\n            <stateOrCountry>MA</stateOrCountry>",
+        "            <city>Providence</city>\n            <stateOrCountry>RI</stateOrCountry>",
+    )
+    filing = dataclasses.replace(
+        make_filing("lovable_labs_D.xml", accession=LOVABLE[0], cik=LOVABLE[1]), xml=xml
+    )
+    assert "<city>Providence</city>" in xml  # the rewrite landed, so the skip below means something
+    assert "Palo Alto" in xml  # ... and the in-region related person survived it
     assert list(connector.to_records(filing)) == []
     assert connector.skipped == {"issuer_outside_region": 1}
 

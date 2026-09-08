@@ -83,24 +83,33 @@ HtmxDep = Annotated[bool, Depends(is_htmx)]
 class Facets:
     """The vocabularies the filter form offers that come from data rather than from an enum."""
 
-    cities: list[str]
+    #: One row per city, carrying its state and metro: the wire value is still the bare city
+    #: name, and the other two are what let the select group its options and tell two
+    #: same-named cities apart (:class:`db.queries.CityFacet`).
+    cities: list[queries.CityFacet]
+    #: The region select of SPEC §12 Phase 7, in the order it renders. A plain list of names
+    #: because the metro *is* the wire value here — there is nothing else to carry.
+    metros: list[str]
     #: ``(slug, name)`` — the slug is the wire value, the name is what the user reads.
     sectors: list[tuple[str, str]]
 
 
 async def facets(session: AsyncSession) -> Facets:
-    """Cities and sectors for the filter form, as the database currently holds them.
+    """Cities, regions and sectors for the filter form, as the database currently holds them.
 
-    Two small ordered lookups, and the one thing here a handler calls by hand rather than
+    Three small ordered lookups, and the one thing here a handler calls by hand rather than
     declaring in its signature. FastAPI resolves a signature dependency before the branch that
-    picks a template, so declaring this one would run both lookups on every htmx swap of ``/``
-    and ``/roles`` to build a filter form the returned fragment does not contain — only the
-    full-page templates include ``_filters.html``.
+    picks a template, so declaring this one would run all three lookups on every htmx swap of
+    ``/`` and ``/roles`` to build a filter form the returned fragment does not contain — only
+    the full-page templates include ``_filters.html``.
 
-    They are read from the tables rather than from ``config/regions.yaml`` so the form never
-    offers a city that would return nothing; the config decides what gets *ingested* (SPEC §11).
+    All three are read from the tables rather than from ``config/regions.yaml`` so the form
+    never offers a value that would return nothing; the config decides what gets *ingested*
+    (SPEC §11), and the two lists differ in both directions on purpose — see
+    :func:`db.queries.facet_metros`.
     """
     return Facets(
         cities=await queries.facet_cities(session),
+        metros=await queries.facet_metros(session),
         sectors=await queries.facet_sectors(session),
     )

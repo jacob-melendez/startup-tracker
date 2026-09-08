@@ -7,8 +7,10 @@
   and rendered inline with `standalone=True`: no `hx-get`, nothing to expand, so the page is
   complete and useful with JavaScript switched off and stays a stable permalink.
 -#}
-{#- No `title` block: base.html composes "<company name> · Bay Area Startup Tracker" from the
-    `page_title` this route passes, so this permalink is named like every other page. -#}
+{#- No `title` block: base.html composes "<company name> · <site name>" from the `page_title`
+    this route passes, so this permalink is named like every other page. The site name comes from
+    `site_name()`, i.e. from `config/regions.yaml`, never from a metro spelled out in a template
+    (SPEC §12 Phase 7). -#}
 {% block content %}
   <div class="panel">
     {%- include "_company_panel.html" %}

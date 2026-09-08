@@ -8,7 +8,8 @@ URL preserves them — so they are short and stable:
 parameter            repeats?  meaning
 ===================  ========  ==================================================
 ``q``                no        search text (blank is *not* a filter)
-``city``             yes       ``locations.city``
+``city``             yes       ``locations.city``, by name — see below
+``metro``            yes       ``locations.metro`` — the UI's "Region" select
 ``sector``           yes       ``sectors.slug``
 ``stage``            yes       ``companies.stage``
 ``round``            yes       latest round type
@@ -29,6 +30,19 @@ parameter            repeats?  meaning
 ``role_q``           no        ...a substring of the role title, narrowing the table
 ``role_closed``      no        ...list the company's closed roles too
 ===================  ========  ==================================================
+
+``city`` and ``metro`` are the two geography filters (SPEC §12 Phase 7), and they are separate
+``AND`` predicates rather than a hierarchy — picking a region does not repopulate the city
+select, and does not need to. **``city`` matches on the city name alone**: a name that occurs
+in two regions matches in both of them, deliberately, and ``metro`` is how you narrow it to
+one. Neither value carries a state on the wire, so every URL bookmarked while there was only
+one region still means what it meant, and the City select is free to append a state to an
+*ambiguous label* without changing what it submits.
+
+Both are also the exception to the "a malformed value is a 400" rule below: their vocabularies
+are strings the connectors stored, not enum members, so an unrecognised value is an empty
+result page rather than an error. There is no closed list to check them against that would
+still be right after the next run.
 
 Four rules the whole module follows:
 
@@ -256,6 +270,7 @@ def _parse_cursor(raw: str | None, sort: StrEnum) -> Cursor | None:
 def shared_filters(
     q: Annotated[str | None, Query()] = None,
     city: Annotated[list[str] | None, Query()] = None,
+    metro: Annotated[list[str] | None, Query()] = None,
     sector: Annotated[list[str] | None, Query()] = None,
     stage: Annotated[list[str] | None, Query()] = None,
     round_type: Annotated[list[str] | None, Query(alias="round")] = None,
@@ -274,11 +289,20 @@ def shared_filters(
     Declared once and depended on by both page dependencies, so the two views cannot drift
     apart. ``closed`` is deliberately absent: it belongs to ``/roles`` alone
     (:func:`job_list_request` adds it).
+
+    Being declared here is also the whole of what SPEC §12 Phase 7's region selector needed on
+    this side: ``metro`` reaches ``/`` and ``/roles`` because they both depend on this function,
+    not because either route was taught about it. A parameter added to one route instead would
+    be the drift this function exists to prevent.
     """
     text = _text(q) if q else ""
     return Filters(
         q=text or None,
         cities=_clean(city),
+        # Cleaned exactly like ``city`` — same free text from the same table, so the same rule:
+        # trimmed, blanks dropped (an emptied ``?metro=`` is "unset"), duplicates collapsed, and
+        # an unknown value left to return nothing rather than raising.
+        metros=_clean(metro),
         sector_slugs=_clean(sector),
         stages=_enum_list("stage", enums.Stage, stage),
         round_types=_enum_list("round", enums.RoundType, round_type),

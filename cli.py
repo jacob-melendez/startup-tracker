@@ -1,9 +1,9 @@
 """Command-line entry point (SPEC §11 ``cli.py``).
 
-Six commands. SPEC §11 names five (``migrate seed refresh stats merge-review``) and all five are
-registered here; ``sync-contacts`` is the one addition — local reconciliation, nothing fetched —
-and CLAUDE.md records it, the way the Makefile reconciles its own target list against the same
-section.
+Seven commands. SPEC §11 names five (``migrate seed refresh stats merge-review``) and all five
+are registered here; ``sync-contacts`` and ``sync-regions`` are the two additions — both pure
+local reconciliation, neither fetching anything — and CLAUDE.md records them, the way the
+Makefile reconciles its own target list against the same section.
 
 * ``migrate`` — ``alembic upgrade head`` through the Alembic API, the same thing ``make migrate``
   runs inside Compose (SPEC §3: Alembic owns all DDL).
@@ -16,18 +16,24 @@ section.
   ``fetch_runs`` row, success or failure (SPEC §7.2) — the one exception being a run whose row
   could not be written at all (database unreachable), which the summary line marks with
   :data:`NOT_RECORDED` so stdout never claims a row that does not exist.
-* ``stats`` — the state of the database in one screen: row counts, the last successful run of
-  every *configured* connector with any live failure streak (SPEC §7.2), and the companies and
-  jobs added in the last :data:`~db.queries.STATS_WINDOW_DAYS` days. It reads and prints;
-  alone among the six it writes nothing at all.
+* ``stats`` — the state of the database in one screen: row counts, the companies standing in
+  each metro (SPEC §12 Phase 7), the last successful run of every *configured* connector with
+  any live failure streak (SPEC §7.2), and the companies and jobs added in the last
+  :data:`~db.queries.STATS_WINDOW_DAYS` days. It reads and prints; alone among the seven it
+  writes nothing at all.
 * ``merge-review`` — work through the ``merge_candidates`` queue. SPEC §8 forbids auto-merging
   a trigram match, so every probable duplicate the pipeline finds waits here for a human to
   decide; this command is consequently the only thing in the system that deletes a company.
 * ``sync-contacts`` — rebuild SPEC §6's *constructed* LinkedIn links across the whole database.
-  The odd one out: it fetches nothing and writes no ``fetch_runs`` row, because it is pure local
-  reconciliation. The ingest path already does this per company as it upserts one; this reaches
-  the companies no connector re-lists, which is what a database carried over from an earlier
-  phase is full of.
+  One of the two odd ones out: it fetches nothing and writes no ``fetch_runs`` row, because it is
+  pure local reconciliation. The ingest path already does this per company as it upserts one;
+  this reaches the companies no connector re-lists, which is what a database carried over from an
+  earlier phase is full of.
+* ``sync-regions`` — the same idea for SPEC §11's geography, and equally local: relabel the
+  ``locations`` rows already stored from ``config/regions.yaml``, after a metro is added, renamed,
+  switched off or has a city moved between regions. Editing that file changes what is *ingested*;
+  the stored rows only catch up when something happens to re-ingest their companies, which for a
+  city nothing re-lists is never.
 
 Logging is configured once, in the Typer callback, from :class:`settings.Settings`. Log lines go
 to stderr (see :mod:`logging_config`), so stdout carries only the per-connector summary lines.
@@ -39,6 +45,7 @@ import asyncio
 import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -53,7 +60,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import enums, queries
-from db.models import FetchRun, MergeCandidate
+from db.models import FetchRun, Location, MergeCandidate
 from db.session import dispose_engine, get_session_factory
 from ingest.base import Connector
 from ingest.config import (
@@ -119,7 +126,11 @@ Target = tuple[Connector[Any], ConnectorConfig]
 
 @app.callback()
 def main() -> None:
-    """Bay Area startup tracker — migrations and on-demand ingestion (docs/SPEC.md §11)."""
+    """Startup tracker — migrations and on-demand ingestion (docs/SPEC.md §11)."""
+    # No metro is named in that line on purpose. It is what `--help` leads with, and
+    # config/regions.yaml is the only place region-specific wording may live (SPEC §11, §12
+    # Phase 7): a help text that named one region would be wrong the moment a second was
+    # configured, and would be a region literal outside the config besides.
     try:
         settings = get_settings()
     except ValidationError as exc:
@@ -210,7 +221,7 @@ def require_contact_email(settings: Settings, names: Iterable[str]) -> None:
 
 def build_connectors(ctx: typer.Context, names: Sequence[str]) -> list[Target]:
     """Instantiate every selected connector up front, so a bad ``options`` block fails before
-    any ``FetchRun`` is written. ``config/regions.yaml`` is the only Bay-Area-specific input."""
+    any ``FetchRun`` is written. ``config/regions.yaml`` is the only region-specific input."""
     registry = all_connectors()
     regions = load_regions_config()
     targets: list[Target] = []
@@ -503,10 +514,14 @@ def format_stats(
 ) -> list[str]:
     """The whole report, as lines. Pure: every input is passed in, so a test can pin the clock.
 
-    Three sections, the three things SPEC §12 Phase 6 asks for — row counts, the last successful
-    run per connector, and the 7-day intake — under bare-word headings with their contents
-    indented, which keeps the output greppable (``stats | grep 'jobs added'``) without any
-    quoting.
+    Four sections — SPEC §12 Phase 6's three (row counts, the last successful run per connector,
+    the 7-day intake) plus Phase 7's per-metro rollup — under bare-word headings with their
+    contents indented, which keeps the output greppable (``stats | grep 'jobs added'``) without
+    any quoting.
+
+    The rollup sits directly under ``rows`` because that is what it breaks down: the eye goes
+    from "3 188 companies" to where those companies are, and a reader who has just edited
+    ``config/regions.yaml`` is looking for exactly that pair.
     """
     lines = [f"database  {database}", "rows"]
     lines.extend(
@@ -544,6 +559,8 @@ def format_stats(
             ]
         )
     )
+    lines.append("companies per metro  (an office in two metros counts in both)")
+    lines.extend(_metro_lines(snapshot.companies_by_metro))
     lines.append("last successful run")
     lines.extend(_run_lines(connectors, last_ok=last_ok, failures=failures, now=now))
     lines.append(f"last {queries.STATS_WINDOW_DAYS} days")
@@ -556,6 +573,30 @@ def format_stats(
         )
     )
     return lines
+
+
+def _metro_lines(rollup: Sequence[tuple[str, int]]) -> list[str]:
+    """Companies per metro, most companies first — SPEC §12 Phase 7's operational question,
+    "did the new metro actually ingest anything?", answered in one block.
+
+    A company is counted once per metro it holds a location in, so one with two offices in two
+    metros is in both counts and this block can sum to more than the ``companies`` line above it
+    (:attr:`~db.queries.StatsSnapshot.companies_by_metro` is where that is decided). The heading
+    says so rather than leaving a reader to reconcile two numbers that were never meant to agree.
+
+    Driven by the metros in the *database*, never by ``config/regions.yaml``: a metro that was
+    renamed, or switched off after it had already been ingested, still owns rows, and the point
+    of the section is to report what is stored rather than what was asked for. A configured metro
+    with no companies is therefore absent instead of listed as zero, and its absence is itself
+    the answer.
+
+    An empty rollup gets the dashed line :func:`_run_lines` gives an empty connector list, and
+    for the same reason: a section that disappeared when its numbers were all zero would read as
+    breakage on a freshly migrated database.
+    """
+    if not rollup:
+        return [f"{INDENT}{NOTHING} no company has a location yet"]
+    return _count_lines([(metro, companies, "") for metro, companies in rollup])
 
 
 def _run_lines(
@@ -655,12 +696,19 @@ def _unreachable(exc: Exception) -> typer.Exit:
 
 @app.command()
 def stats() -> None:
-    """Print the state of the local database: row counts, connector health, the last 7 days.
+    """Print the state of the local database: row counts, companies per metro, connector health,
+    the last 7 days.
 
     Reads and prints; it is the one command that writes nothing at all, fetches nothing, and
     holds no transaction open. The connector list comes from config/connectors.yaml in config
     order — the same list /runs shows, including connectors that have never run, since a source
     that has been silent for a month is the thing worth seeing (SPEC §9).
+
+    "companies per metro" lists the metros the database actually holds companies in, most first,
+    counting a company once in every metro it has an office in. It is the check to run after
+    adding a metro to config/regions.yaml and refreshing: a metro missing from that block has
+    ingested nothing yet. Relabelling cities the config has since moved is `sync-regions`, not
+    this command.
 
     "last ok" counts only runs that ended `ok`, while a failure streak is broken by a `partial`
     run as well, so a connector can show a stale success and no failures at once: it is
@@ -1108,6 +1156,318 @@ def sync_contacts(
         f"sync-contacts  companies={result.companies}  added={result.added}  "
         f"removed={result.removed}{suffix}"
     )
+
+
+# --------------------------------------------------- sync-regions (SPEC §11, §12 Phase 7)
+
+#: ``locations`` rows read per keyset page — the size of one ``SELECT`` round trip, *not* of a
+#: transaction: each changed row is committed on its own (see :func:`sync_regions_once`).
+#: ``locations`` is a vocabulary table, one row per city rather than per company, so on a real
+#: database the whole sweep is a single page.
+REGION_SYNC_BATCH = 500
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RegionSyncChange:
+    """One ``locations`` row whose stored labels disagree with ``config/regions.yaml``.
+
+    Both the stored and the configured value are carried so the report can print the move rather
+    than the destination: an operator reviewing a config edit under ``--dry-run`` is checking
+    what it takes *away* from a row, and "Foo → Bar" is the whole review.
+    """
+
+    location_id: int
+    city: str
+    state: str
+    stored_metro: str
+    stored_country: str
+    metro: str
+    country: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RegionSyncResult:
+    """What one :func:`sync_regions_once` sweep did — or, under ``dry_run``, would have done."""
+
+    #: Rows walked, whether or not they changed.
+    locations: int
+    changes: tuple[RegionSyncChange, ...]
+    #: ``(city, state, stored metro)`` for every stored city no *enabled* region configures.
+    #: Reported and left alone, never rewritten and never deleted: the database is the historical
+    #: record (SPEC §2). A tuple rather than a row type because nothing computes on it — it is
+    #: printed, and the stored metro is in it only so the report can show what the row keeps.
+    unconfigured: tuple[tuple[str, str, str], ...]
+    dry_run: bool
+
+
+def _place(city: str, state: str) -> str:
+    """``"Foo City, CA"`` — how both blocks of the report name a row.
+
+    One function rather than two f-strings because the state is never optional here: a bare city
+    name is ambiguous across a multi-state config (:meth:`RegionsConfig.lookup_city_name` refuses
+    to answer one), and a report that dropped it would name two different rows identically.
+    """
+    return f"{city}, {state}"
+
+
+def _change_lines(changes: Sequence[RegionSyncChange]) -> list[str]:
+    """One line per changed row, naming only the fields that actually differ.
+
+    ``metro`` and ``country`` are listed separately because they change for different reasons: a
+    metro moves when a city is re-scoped between regions, ``country`` only when a region's own
+    ``country:`` is corrected, and a report that merged them would make the second look like the
+    first. Values are quoted — a metro label contains spaces, and unquoted it would run into the
+    arrow.
+    """
+    width = max(len(_place(change.city, change.state)) for change in changes)
+    lines: list[str] = []
+    for change in changes:
+        moves: list[str] = []
+        if change.stored_metro != change.metro:
+            moves.append(f"metro {change.stored_metro!r} → {change.metro!r}")
+        if change.stored_country != change.country:
+            moves.append(f"country {change.stored_country!r} → {change.country!r}")
+        lines.append(
+            f"{INDENT}{_place(change.city, change.state).ljust(width)}  {', '.join(moves)}"
+        )
+    return lines
+
+
+def _unconfigured_lines(rows: Sequence[tuple[str, str, str]]) -> list[str]:
+    """One line per stored city no enabled region claims, with the metro it keeps.
+
+    Printed in full rather than counted: each one is a decision waiting for a person — a city to
+    add to a region, a region to re-enable, or a row from an older config that is simply history
+    now — and a number alone tells nobody which.
+    """
+    width = max(len(_place(city, state)) for city, state, _ in rows)
+    return [
+        f"{INDENT}{_place(city, state).ljust(width)}  metro {metro!r}"
+        for city, state, metro in rows
+    ]
+
+
+def format_region_sync(result: RegionSyncResult) -> list[str]:
+    """The sweep as lines: what moved, what no enabled region claims, then the summary line.
+
+    Pure, like :func:`format_stats` — the sweep decides and this prints — and laid out like
+    ``stats``: bare-word headings at column 0 with their rows indented, so the output stays
+    greppable. Both blocks are omitted when empty; the summary line never is, because a sweep
+    that changed nothing still has to say so out loud.
+
+    The first heading is written in the tense the run actually has. Under ``--dry-run`` the rows
+    below it have not moved, and a block headed "relabelled" listing changes that were not made
+    is the one misreading of this report that would cost an operator a second sweep to discover.
+    """
+    lines: list[str] = []
+    if result.changes:
+        lines.append("would relabel" if result.dry_run else "relabelled")
+        lines.extend(_change_lines(result.changes))
+    if result.unconfigured:
+        lines.append("in no enabled region  (left as ingested — SPEC §2, the historical record)")
+        lines.extend(_unconfigured_lines(result.unconfigured))
+    if result.dry_run:
+        suffix = "  (dry run — nothing written)"
+    elif not result.changes:
+        # The same note ``sync-contacts`` ends an unchanged sweep with: on a database of a few
+        # hundred cities, zeroes look like a command that did not run, and this is precisely the
+        # answer a second invocation is supposed to give.
+        suffix = "  (already in sync)"
+    else:
+        suffix = ""
+    lines.append(
+        f"sync-regions  locations={result.locations}  relabelled={len(result.changes)}  "
+        f"unconfigured={len(result.unconfigured)}{suffix}"
+    )
+    return lines
+
+
+async def sync_regions_once(*, batch_size: int, dry_run: bool) -> RegionSyncResult:
+    """Walk every ``locations`` row and reconcile it with the *enabled* regions of
+    ``config/regions.yaml``, behind a fresh engine disposed on the way out like `refresh_all`.
+
+    Reads and writes only the local database — nothing is fetched, so there is no ``fetch_runs``
+    row to write (SPEC §7.2 records runs, and this is not one), exactly as ``sync-contacts``
+    does not.
+
+    Only ``metro`` and ``country`` are ever written. ``city`` and ``state`` are half of
+    ``uq_locations_city_state``, so adopting the configured *spelling* of a city — which
+    ``_fill_metros`` does on the ingest path, where it is writing a new row — would here mean
+    either colliding with an existing row or folding two rows into one, and folding two rows
+    together is a merge decision (SPEC §8), not a relabelling. :meth:`RegionsConfig.lookup`
+    matches case- and whitespace-insensitively, so a differently-cased row is still recognised
+    and still gets its metro; it simply keeps its own spelling.
+
+    That lookup also answers to a city's configured *aliases*, which changes what this sweep does
+    to an old row without changing a line of it. A row stored under a spelling the file has since
+    learned used to fall into the "in no enabled region" block below, reported and untouched;
+    now it resolves and is relabelled, while still keeping the spelling it was stored under. Two
+    rows for the one place therefore stay two rows — the canonical one later ingests write and
+    the one already there — until a person folds them together by hand. Nothing here does that
+    for them, and neither does anything else: ``merge_candidates`` holds a pair of *companies*
+    and ``merge-review`` resolves only those, so no command in this tree merges two ``locations``
+    rows. That is the conservative half of the same rule: this command may correct a label, never
+    decide an identity (SPEC §8). Both rows carry the right ``metro`` afterwards, so the region
+    filter still sees one place; it is the City facet that shows two.
+
+    A city no enabled region configures is collected and reported, never touched: it may predate
+    a config edit, or sit in a region someone switched off, and SPEC §2 makes the database the
+    historical record either way. ``enabled: false`` is deliberately not a delete instruction.
+
+    Paged by keyset over ``locations.id`` — ``batch_size`` rows per query, materialised with
+    ``list`` before anything is written, so no open cursor spans a commit — and committed one
+    changed row at a time. Per row rather than per page because a concurrent ingest run upserts
+    the same cities in *its* order (:func:`ingest.pipeline._upsert_locations`): holding write
+    locks on several ``locations`` rows at once is what would let the two deadlock. Unchanged
+    rows are never written at all, so the sweep is read-only on a database already in sync.
+
+    ``dry_run`` skips the ``UPDATE`` rather than rolling one back — unlike ``sync-contacts``,
+    whose counts can only come from what its reconciliation actually wrote, everything reported
+    here is decided by comparing two values already in hand, so executing the write would add
+    nothing but a way to get it wrong.
+    """
+    if batch_size < 1:
+        msg = f"batch_size must be at least 1, got {batch_size}"
+        raise ValueError(msg)
+    regions = load_regions_config()
+    session_factory = get_session_factory()
+    changes: list[RegionSyncChange] = []
+    unconfigured: list[tuple[str, str, str]] = []
+    locations = 0
+    after = 0
+    log.info("region sync started", batch_size=batch_size, dry_run=dry_run)
+    try:
+        while True:
+            async with session_factory() as session:
+                page = list(
+                    await session.execute(
+                        select(
+                            Location.id,
+                            Location.city,
+                            Location.state,
+                            Location.metro,
+                            Location.country,
+                        )
+                        .where(Location.id > after)
+                        .order_by(Location.id)
+                        .limit(batch_size)
+                    )
+                )
+                if not page:
+                    break
+                locations += len(page)
+                for location_id, city, state, metro, country in page:
+                    configured = regions.lookup(city, state)
+                    if configured is None:
+                        unconfigured.append((city, state, metro))
+                        continue
+                    if (metro, country) == (configured.metro, configured.country):
+                        continue
+                    changes.append(
+                        RegionSyncChange(
+                            location_id=location_id,
+                            city=city,
+                            state=state,
+                            stored_metro=metro,
+                            stored_country=country,
+                            metro=configured.metro,
+                            country=configured.country,
+                        )
+                    )
+                    if dry_run:
+                        continue
+                    await session.execute(
+                        update(Location)
+                        .where(Location.id == location_id)
+                        .values(metro=configured.metro, country=configured.country)
+                    )
+                    await session.commit()
+                    log.info(
+                        "location relabelled",
+                        location_id=location_id,
+                        city=city,
+                        state=state,
+                        was=metro,
+                        metro=configured.metro,
+                    )
+                after = page[-1].id
+    finally:
+        await dispose_engine()
+    result = RegionSyncResult(
+        locations=locations,
+        changes=tuple(changes),
+        unconfigured=tuple(unconfigured),
+        dry_run=dry_run,
+    )
+    log.info(
+        "region sync finished",
+        locations=result.locations,
+        relabelled=len(result.changes),
+        unconfigured=len(result.unconfigured),
+        dry_run=dry_run,
+    )
+    return result
+
+
+@app.command(name="sync-regions")
+def sync_regions(
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Do the whole sweep and write nothing, reporting exactly what it would change.",
+        ),
+    ] = False,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            metavar="N",
+            min=1,
+            help="Locations read per keyset page; each changed row is committed on its own.",
+        ),
+    ] = REGION_SYNC_BATCH,
+) -> None:
+    """Relabel every stored city with the metro config/regions.yaml gives it today.
+
+    Editing that file changes what is *ingested*; it does not touch a row already in the
+    database. A city moved between regions, a metro renamed, a region switched off and back on
+    under another label — each leaves stored locations carrying the metro they were first
+    ingested with until something happens to re-ingest the companies standing in them, which for
+    a city no connector re-lists is never. This is the sweep that closes that gap, and the
+    command to run after editing the config and before `refresh` (SPEC §11, §12 Phase 7).
+
+    Reads and writes only the local database: nothing is fetched, so no fetch_runs row is
+    written, exactly as for `sync-contacts`. It writes `metro` and `country` and nothing else,
+    and only where they differ, so running it twice is running it once.
+
+    A city in no enabled region is *reported and left exactly as it is*. It is never relabelled
+    and never deleted: it may predate a config edit or sit in a region someone switched off, and
+    the database is the historical record (SPEC §2). Such rows keep appearing in the UI facet,
+    which is honest rather than a bug.
+
+    It deliberately does *not* re-run entity resolution. SPEC §8 matches similar company names
+    within a metro, so moving a city between metros can change which companies would have been
+    considered duplicates — in both directions: a pair that was compared may no longer be, and
+    two companies that never met may now share a metro. Deciding that silently, in a command
+    whose job is relabelling, is exactly the auto-merge SPEC §8 forbids.
+
+    Nor does any later ingest run re-compare that pair for you. SPEC §8 step 3 runs only for a
+    record that is *creating* a company, and re-ingesting a company already stored resolves it by
+    external_id, domain or name and stops there — so a pair this move newly puts in one metro
+    reaches `merge-review` only if some later record creates a third, similar row. After moving a
+    city, look for duplicates in the receiving metro yourself: `stats`' companies-per-metro
+    section says whether the count moved, and the UI's Region filter lists who is in it.
+
+    --dry-run prints the same report and writes nothing. Exit status: 0, or 1 if the database
+    cannot be read.
+    """
+    try:
+        result = asyncio.run(sync_regions_once(batch_size=batch_size, dry_run=dry_run))
+    except (SQLAlchemyError, OSError) as exc:
+        raise _unreachable(exc) from None
+    for line in format_region_sync(result):
+        typer.echo(line)
 
 
 if __name__ == "__main__":

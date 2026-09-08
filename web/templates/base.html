@@ -17,10 +17,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {#- Every page supplies only its own segment, as the `page_title` its route already
         passes; the app name is appended here so the suffix cannot drift page by page (it
-        once did: `/company/{id}` was the one tab title without it). -#}
+        once did: `/company/{id}` was the one tab title without it).
+
+        `site_name()` rather than a literal: §12 Phase 7 leaves `config/regions.yaml` as the
+        only place a metro may be named, and this suffix used to name one. -#}
     <title>{% block title %}
       {%- if page_title %}{{ page_title }} · {% endif -%}
-      Bay Area Startup Tracker
+      {{ site_name() }}
     {%- endblock %}</title>
     <link rel="stylesheet" href="/static/styles.css">
     {#- `defer` so parsing is never blocked; htmx binds on DOMContentLoaded. -#}
@@ -29,7 +32,7 @@
   <body>
     {%- set path = request.url.path if request else "/" %}
     <header class="topbar">
-      <a class="brand" href="/">Bay Area Startup Tracker</a>
+      <a class="brand" href="/">{{ site_name() }}</a>
       <nav aria-label="Main">
         <a class="nav-link{% if path == '/' or path.startswith('/company') %} active{% endif %}"
            href="/">Companies</a>

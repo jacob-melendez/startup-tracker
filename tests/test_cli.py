@@ -932,6 +932,56 @@ def test_sync_contacts_forwards_the_batch_size_it_was_given(
     assert calls == [(25, False), (CONTACT_SYNC_BATCH, True)]
 
 
+# ------------------------------------------------------- sync-regions (SPEC §11, §12 Phase 7)
+#
+# What the sweep *does* is tested in tests/test_cli_ops.py against real rows. What is tested here
+# is the plumbing the two sync commands share and that no behavioural test can see: the option
+# reaching the coroutine, Typer refusing a nonsense value before a connection is opened, and the
+# engine being disposed on the way out.
+
+
+def test_sync_regions_rejects_a_batch_size_below_one(runner: CliRunner) -> None:
+    """Typer's ``min=1`` catches it as a usage error, before a connection is opened — the same
+    guard ``sync-contacts`` has, because a zero page size is an infinite keyset loop."""
+    result = invoke(runner, "sync-regions", "--batch-size", "0")
+
+    assert result.exit_code != 0
+    assert "batch-size" in result.output.lower()
+
+
+def test_sync_regions_forwards_the_batch_size_it_was_given(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag accepted, validated by Typer and then dropped is invisible to every gate here: with
+    the constant hard-wired into the call, ruff, ``mypy --strict`` and the whole suite still pass
+    and stdout is byte-identical. The sweep's own tests prove ``batch_size`` is *used*; this
+    proves it arrives, and that ``--dry-run`` leaves the default in place rather than replacing it.
+    """
+    calls: list[tuple[int, bool]] = []
+
+    async def record(*, batch_size: int, dry_run: bool) -> cli.RegionSyncResult:
+        calls.append((batch_size, dry_run))
+        return cli.RegionSyncResult(locations=0, changes=(), unconfigured=(), dry_run=dry_run)
+
+    monkeypatch.setattr(cli, "sync_regions_once", record)
+
+    assert invoke(runner, "sync-regions", "--batch-size", "25").exit_code == 0
+    assert invoke(runner, "sync-regions", "--dry-run").exit_code == 0
+
+    assert calls == [(25, False), (cli.REGION_SYNC_BATCH, True)]
+
+
+def test_sync_regions_disposes_the_engine(
+    runner: CliRunner, dispose_calls: list[int], empty_database: str
+) -> None:
+    """Each ``asyncio.run`` gets a fresh event loop and an asyncpg pool must be closed on the loop
+    that created it, so every command that opens one closes it — including the sweep that finds
+    nothing to do, which is the path that returns earliest."""
+    assert invoke(runner, "sync-regions").exit_code == 0
+
+    assert dispose_calls == [1]
+
+
 def test_the_readme_upgrade_section_promises_only_the_links_a_row_can_have() -> None:
     """SPEC §6 builds the LinkedIn *company* URL from the domain, so a company without one — an
     EDGAR-only Form D row, 53 of the 3,188 on the developer's own database — gets the people

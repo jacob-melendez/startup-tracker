@@ -1,16 +1,93 @@
-# SPEC §1, §11, §12 Phase 7: the ONLY place Bay-Area-specific logic may live.
+# SPEC §1, §11, §12 Phase 7: the ONLY place region-specific logic may live.
 #
 # Each region is one metro. Connectors that filter by geography (sec_edgar) use the city list;
 # ``Location.metro`` is filled from ``metro`` at ingest time and entity resolution (SPEC §8)
-# scopes name matches to a metro. Phase 7 adds more regions here and nothing else changes.
+# scopes name matches to a metro. Adding, renaming or retiring a metro is an edit to this file
+# and to nothing else — ``tests/test_regions.py`` fails the build if a metro or a city name
+# configured here also appears as a literal anywhere in the source tree.
 #
-# City names are compared case-insensitively after whitespace normalisation.
+# Keys of a region:
+#   metro    the label written to ``Location.metro``; unique across the file.
+#   state    the default state for every city in the region.
+#   state_name
+#            optional: how ``state`` is written out in prose. Nothing is stored from it. It is
+#            what lets a text scanner tell "City, <this state spelled out>" — a poster naming
+#            this city's own state — from "City, <some other state>", which names a different
+#            place of the same name; hn_hiring uses it and nothing else does. Omitting it costs
+#            a mention a rank and never a record: without it a written-out qualifier simply
+#            stops promoting, and the mention is ranked as the bare one it now looks like.
+#            One or two capitalised words is the shape hn_hiring reads after a comma, so a name
+#            written any other way is never recognised — which is the same silent loss of a rank
+#            as omitting it, not a wrong answer.
+#            It belongs here rather than in the connector for the same reason the metro does —
+#            a table of the fifty state names written into code is region logic outside this
+#            file, and the letter heuristic that used to stand in for one read the neighbouring
+#            state in "…, New Jersey" as this city's own and filed the company in the wrong
+#            metro (measured on the live September 2026 thread, 2026-09-08).
+#   country  optional, defaults to ``US``.
+#   enabled  optional, defaults to ``true``. ``enabled: false`` keeps a region's cities in the
+#            file while taking them out of ingestion and out of every lookup. It does not touch
+#            rows already stored: the database is the historical record (SPEC §2), so a disabled
+#            metro can still show up in the UI facet, which is honest rather than a bug.
+#   cities   a bare string takes the region's ``state``; the mapping form
+#            ``{name, state, state_name, aliases}`` overrides the state for one city and lists
+#            the other spellings sources use for it. The state override is required because a
+#            real metro crosses state lines — New York takes in Jersey City NJ and Stamford CT.
+#            ``state`` and ``state_name`` travel together: a city that overrides its state takes
+#            its own name for it or none, never the region's, which names a different state —
+#            giving ``state_name`` without ``state`` fails on load.
+#            ``country`` is *not* overridable per city; every metro here is US, and SPEC §1
+#            scopes the future goal to other US startup hubs.
+#   aliases  optional, on a city: the other spellings a source writes that same place as. A
+#            lookup matches the canonical ``name`` or any alias, normalised the same way, and
+#            always returns the entry under its canonical name — the alias never reaches the
+#            database. That is the point of the key: ``uq_locations_city_state`` keeps one row
+#            per real place, and this file decides what that row is called, so a source's own
+#            spelling stops being a second city (or, worse, a company dropped as out of region).
+#
+# The same (city, state) pair may appear only once in the whole file, disabled regions included:
+# ``uq_locations_city_state`` gives one city exactly one metro, so a file mapping a city into two
+# metros describes a database that cannot exist, and it stays impossible while one of the two is
+# merely switched off. An alias is held to the same rule against the same needles: it may not
+# collide, after normalisation, with another city's name or with another alias in the same state,
+# anywhere in the file, because a spelling two cities answer to is a lookup with no honest answer.
+#
+# City names and aliases are compared case-insensitively after whitespace normalisation.
+#
+# Every alias below is a measured fact about a source rather than a guess at what people might
+# write, and carries the count that earned it. All counts were measured on 2026-09-08 against the
+# live sources: the full Y Combinator directory (6204 companies) and the September 2026 Hacker
+# News "Who is hiring?" thread (273 comments). An alias nothing was ever observed to use widens
+# every text scan for nothing, and a *short* one is worse than useless — see Los Angeles below,
+# where the live data shows a two-letter form naming somewhere else entirely.
+#
+# Cost of a city: sec_edgar issues one full-text search per configured city per 30-day window, so
+# the city count is the one thing that lengthens a backfill. Each city also widens the surface for
+# a false-positive name match, so a city earns its place by being somewhere startups actually file
+# and post rather than by being on the metro's official boundary.
 regions:
   - metro: Bay Area
     state: CA
+    state_name: California
     country: US
     cities:
-      - San Francisco
+      - name: San Francisco
+        aliases:
+          # The September 2026 Hacker News "Who is hiring?" thread ran to 273 comments, of which
+          # 220 named no configured city and were dropped as out of region. 16 of those 220 name
+          # this city this way, as a whole word ("Uncountable | NY, SF, London and Toronto
+          # (In-Person) | Full-Stack Engineering") — they are dropped for their spelling alone,
+          # since a comment that also wrote the name out would not be in the dropped set.
+          #
+          # Its cost, measured against the shipped matcher on 2026-09-08: hn_hiring ends a needle
+          # at any non-word character, so a two-letter spelling is a whole word inside a hostname,
+          # a path segment, an address or a hyphenated compound. A comment naming no other
+          # configured city but linking "https://sf.example.com" is filed here, wrongly. 16
+          # recovered comments a month buys that; a commoner two-letter string would not, and one
+          # no source was ever observed to use would buy nothing at all. This is the only alias
+          # in the file short enough for the question to arise — suspect it first if a company
+          # from nowhere near here ever turns up in this metro.
+          - SF
       - Palo Alto
       - Mountain View
       - Menlo Park
@@ -28,3 +105,86 @@ regions:
       - Burlingame
       - Fremont
       - Emeryville
+
+  - metro: New York
+    state: NY
+    state_name: New York
+    country: US
+    cities:
+      - name: New York
+        aliases:
+          # Of the 6204 Y Combinator directory entries counted, 713 give their location this way
+          # and 195 use the canonical name. Without this alias the geography filter therefore
+          # drops 713 of the 908 companies that name this city — 79% of them — on spelling
+          # alone, which was the largest single data defect in the six-metro config.
+          - New York City
+          # Of the 220 comments in the September 2026 Hacker News "Who is hiring?" thread that
+          # named no configured city and were dropped, 22 name this city this way ("Lucia |
+          # Director of Corp Dev … | Remote (NYC / SEA / global overlap)").
+          - NYC
+      - Brooklyn
+      - Long Island City
+      - White Plains
+      - name: Jersey City
+        state: NJ
+        state_name: New Jersey
+      - name: Hoboken
+        state: NJ
+        state_name: New Jersey
+      - name: Newark
+        state: NJ
+        state_name: New Jersey
+      - name: Stamford
+        state: CT
+        state_name: Connecticut
+
+  - metro: Seattle
+    state: WA
+    state_name: Washington
+    country: US
+    cities:
+      - Seattle
+      - Bellevue
+      - Redmond
+      - Kirkland
+
+  - metro: Boston
+    state: MA
+    state_name: Massachusetts
+    country: US
+    cities:
+      - Boston
+      - Cambridge
+      - Somerville
+      - Waltham
+      - Watertown
+      - Newton
+      - Burlington
+
+  - metro: Los Angeles
+    state: CA
+    state_name: California
+    country: US
+    cities:
+      # No alias. The obvious two-letter short form was considered on 2026-09-08 and rejected on
+      # the live data: of the 6204 Y Combinator directory entries, 31 give their location as
+      # "LA, Nigeria" — Lagos State — and none give it as "LA, CA". A two-letter form is a
+      # substring of the world rather than a nickname for one city, so aliasing it here would
+      # file companies from another continent into this metro under a name they never used.
+      - Los Angeles
+      - Santa Monica
+      - Culver City
+      - Pasadena
+      - El Segundo
+      - Burbank
+      - Glendale
+      - Long Beach
+
+  - metro: Austin
+    state: TX
+    state_name: Texas
+    country: US
+    cities:
+      - Austin
+      - Round Rock
+      - Cedar Park

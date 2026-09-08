@@ -283,27 +283,87 @@ def test_an_early_stage_company_leaves_stage_unset(connector: YCombinatorConnect
     ("name", "fixture"),
     [
         ("Dropback", "batch_winter_2024.json"),  # all_locations: "Remote"
-        ("Yarn", "batch_winter_2024.json"),  # New York City
         ("Blacksmith", "batch_winter_2024.json"),  # no location at all
-        ("Plivo", "batch_summer_2012.json"),  # Austin, TX
         ("9gag", "batch_summer_2012.json"),  # Hong Kong
     ],
 )
 def test_companies_outside_the_configured_region_are_dropped(
     connector: YCombinatorConnector, name: str, fixture: str
 ) -> None:
+    """A hit whose ``all_locations`` resolves to no configured city is counted, not kept.
+
+    Two companies have left this list as ``config/regions.yaml`` grew, and both departures are
+    the point of the file. ``Plivo`` (Austin, TX) went when SPEC §12 Phase 7 made Austin a
+    metro. ``Yarn`` went when the same phase gave the config aliases: it was never an
+    out-of-region company, only one whose city YC spells its own way, and it is asserted as
+    ingested below.
+    """
     batch = "Winter 2024" if "winter" in fixture else "Summer 2012"
     assert record_for(connector, name, batch, fixture) is None
     assert connector.skipped["outside_region"] >= 1
 
 
+def test_a_company_whose_city_yc_spells_its_own_way_is_ingested(
+    connector: YCombinatorConnector,
+) -> None:
+    """SPEC §11: a source's own spelling of a configured city is an alias in
+    ``config/regions.yaml``, so the exact ``(city, state)`` match finds it and the company is
+    kept — under the *canonical* city name, which is the only one ever stored.
+
+    This fixture used to be pinned as a recall gap, honestly labelled and genuinely lost. The
+    spelling in it is the one YC really uses: of the 6 204 directory entries counted on
+    2026-09-08, 713 write this city the long way against 195 that write it the config's way, so
+    the gap was 79% of that metro's companies — the largest single data defect in the six-metro
+    config, and the measurement that earned the alias its line in the file.
+
+    The alias is asserted to be doing the work rather than assumed: the stored city is *not* the
+    string the hit carries, which is what keeps one place to one ``locations`` row (SPEC §5) and
+    is the difference between an alias and a second configured city.
+    """
+    hit = next(
+        hit
+        for hit in fixture_json("ycombinator", "batch_winter_2024.json")["results"][0]["hits"]
+        if hit.get("name") == "Yarn"
+    )
+    assert hit["all_locations"] == "New York City, NY, USA"
+
+    record = record_for(connector, "Yarn", "Winter 2024", "batch_winter_2024.json")
+
+    assert record is not None
+    assert [(loc.city, loc.state, loc.metro, loc.is_hq) for loc in record.locations] == [
+        ("New York", "NY", "New York", True)
+    ]
+    assert connector.skipped == {}
+
+
+def test_a_company_in_a_newly_configured_metro_is_kept(connector: YCombinatorConnector) -> None:
+    """The config, not the connector, decides the geography (SPEC §11, §12 Phase 7).
+
+    Plivo's recorded ``all_locations`` is a city that shipped with Phase 7's six metros, so the
+    same fixture that used to be dropped is now ingested with no code change at all — which is
+    the whole claim ``config/regions.yaml`` makes.
+    """
+    record = record_for(connector, "Plivo", "Summer 2012", "batch_summer_2012.json")
+    assert record is not None
+    hq = next(loc for loc in record.locations if loc.is_hq)
+    assert connector.regions.lookup(hq.city, hq.state) is not None
+
+
 def test_a_multi_office_company_takes_its_first_configured_city_as_hq(
     connector: YCombinatorConnector,
 ) -> None:
+    """The *first configured* office is the HQ — an unconfigured office ahead of it is skipped.
+
+    The leading office has to be a city no region claims for this to test anything; Miami FL is
+    outside all six metros SPEC §12 Phase 7 ships, and the assertion below says so, so a future
+    phase that configures it fails this test loudly instead of hollowing it out (which is exactly
+    what happened here when Austin became a metro).
+    """
+    assert connector.regions.lookup("Miami", "FL") is None
     hit = {
         "name": "Multi",
         "slug": "multi",
-        "all_locations": "Austin, TX, USA; Palo Alto, CA, USA; Berkeley, CA, USA",
+        "all_locations": "Miami, FL, USA; Palo Alto, CA, USA; Berkeley, CA, USA",
     }
     record = next(iter(connector.to_records(YCCompany(batch="Winter 2024", hit=hit))))
     assert [(loc.city, loc.is_hq) for loc in record.locations] == [

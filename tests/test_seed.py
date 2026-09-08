@@ -90,19 +90,105 @@ def test_no_seed_entry_carries_an_ats_token() -> None:
         )
 
 
-def test_every_seed_city_is_a_configured_region_city(regions: RegionsConfig) -> None:
-    """The seed file must not smuggle in a company outside the configured metros (SPEC §1)."""
+def test_every_shipped_seed_city_resolves_in_the_shipped_region_config(
+    regions: RegionsConfig,
+) -> None:
+    """The two config files must agree. ``config/seed_companies.yaml`` names a city and only
+    ``config/regions.yaml`` knows where it is (SPEC §11), and since §12 Phase 7 a city no
+    enabled region claims is skipped rather than raised (below) — so a typo, a city dropped
+    from a metro, or a metro switched off would now take companies out of the bootstrap set
+    with nothing louder than a log line to say so. This is the check that says so.
+
+    The metro is compared against the configured list instead of being named here, so the test
+    keeps holding the day a metro is renamed or the bootstrap list grows past one region.
+    """
     connector = build(regions)
+    metros = set(regions.metros)
+    unclaimed: list[str] = []
     for entry in load_seed_file().entries:
-        record = next(iter(connector.to_records(SeedResult(entry, None, None, "ok"))))
-        assert [loc.metro for loc in record.locations] == ["Bay Area"]
+        records = list(connector.to_records(SeedResult(entry, None, None, "ok")))
+        if not records:
+            unclaimed.append(f"{entry.name} ({entry.city})")
+            continue
+        (location,) = records[0].locations  # one entry, one city, one HQ
+        assert location.metro in metros, f"{entry.name}: metro {location.metro!r} is not enabled"
+
+    assert not unclaimed, "no enabled region claims the city of: " + ", ".join(unclaimed)
+    assert connector.skipped == {}  # the counter an operator reads agrees: nothing was dropped
 
 
-def test_an_unknown_city_is_an_error(regions: RegionsConfig) -> None:
-    connector = build(regions, small_seed({"name": "X", "domain": "x.com", "city": "Reykjavík"}))
-    entry = connector.seed.entries[0]
-    with pytest.raises(ValueError, match="is in no region"):
-        list(connector.to_records(SeedResult(entry, None, None, "ok")))
+def test_an_entry_no_enabled_region_claims_is_skipped_rather_than_failing_the_run(
+    regions: RegionsConfig,
+) -> None:
+    """SPEC §12 Phase 7. This used to raise ``ValueError``, which the pipeline records as a
+    failed item: one unclaimed city therefore turned a routine ``config/regions.yaml`` edit
+    into a ``partial`` seed run, and a metro switched off with ``enabled: false`` — one line —
+    made every company in it an error rather than a decision.
+
+    The entry is dropped, counted under ``outside_region`` (the reason every other connector
+    already uses for a record outside the configured regions, so a single number answers "how
+    many did not land"), and the entries around it in the same file still become records.
+    """
+    connector = build(
+        regions,
+        small_seed(
+            {"name": "Before", "domain": "before.com", "city": "Berkeley"},
+            {"name": "Elsewhere", "domain": "elsewhere.is", "city": "Reykjavík"},
+            {"name": "After", "domain": "after.com", "city": "Oakland"},
+        ),
+    )
+
+    mapped = [
+        record
+        for entry in connector.seed.entries
+        for record in connector.to_records(SeedResult(entry, None, None, "ok"))
+    ]
+
+    assert [record.name for record in mapped] == ["Before", "After"]
+    assert connector.skipped == {"outside_region": 1}
+
+
+def test_switching_a_region_off_skips_its_seed_entries_instead_of_failing_the_run() -> None:
+    """``enabled: false`` is the one-line way to take a metro out of ingestion (SPEC §11), and
+    the seed loader has to honour it the same way every connector does — the bootstrap file
+    keeps naming those companies, and they simply stop loading.
+
+    Run twice over one seed file, with the second region enabled and then disabled, because the
+    ``enabled`` flag is only meaningful as a difference: a single disabled run would also pass
+    if the loader had never resolved that city at all.
+    """
+
+    def two_metros(*, second_enabled: bool) -> RegionsConfig:
+        return RegionsConfig.model_validate(
+            {
+                "regions": [
+                    {"metro": "Metro One", "state": "AA", "cities": ["Alpha City"]},
+                    {
+                        "metro": "Metro Two",
+                        "state": "BB",
+                        "enabled": second_enabled,
+                        "cities": ["Beta City"],
+                    },
+                ]
+            }
+        )
+
+    seed = small_seed(
+        {"name": "Alpha Co", "domain": "alpha.example", "city": "Alpha City"},
+        {"name": "Beta Co", "domain": "beta.example", "city": "Beta City"},
+    )
+
+    def mapped_names(*, second_enabled: bool) -> tuple[list[str], dict[str, int]]:
+        connector = build(two_metros(second_enabled=second_enabled), seed)
+        names = [
+            record.name
+            for entry in seed.entries
+            for record in connector.to_records(SeedResult(entry, None, None, "ok"))
+        ]
+        return names, connector.skipped
+
+    assert mapped_names(second_enabled=True) == (["Alpha Co", "Beta Co"], {})
+    assert mapped_names(second_enabled=False) == (["Alpha Co"], {"outside_region": 1})
 
 
 def test_the_group_key_becomes_the_sector() -> None:

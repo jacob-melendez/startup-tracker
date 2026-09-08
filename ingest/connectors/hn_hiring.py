@@ -24,7 +24,31 @@ pipes at all (a fair few) fall back to :func:`leading_name`, which takes the lea
 name — "SwingVision is the AI tennis app…" — and only if a configured city appears in the body.
 
 Region filter. A comment is kept only when a configured city is named, preferring the header's
-location field over a mention anywhere in the body, and the reason is logged either way.
+location field over a mention anywhere in the body, and the reason is logged either way. Which
+city, when several are named, is :func:`find_city`'s job. It looks for every spelling
+``config/regions.yaml`` records for a city — the canonical name and each of its aliases — and
+returns the entry, so an alias is what matches the poster's text while the canonical name is
+what reaches the database. Posters write the short form far more often than they write a city
+out, and a spelling this connector cannot see is not a near miss: the comment is dropped as out
+of region, so the alias list is the difference between reading a metro's comments and reading a
+fraction of them (the counts that earned each alias sit beside it in the config).
+
+Candidates are ranked by a state-qualified mention (the spelling followed by the city's own
+state, as a code or written out as ``config/regions.yaml`` spells it) first, then the longest
+spelling that matched, then the earliest mention.
+All three pay for themselves on a national city list. The length rule stops a configured city
+whose name *contains* a shorter configured one from being read as the shorter one — they are
+different cities in different metros, and taking the wrong one files the company under the
+wrong region and resolves it (SPEC §8 step 2) against the wrong neighbours. The state rule lets
+a location written out in prose beat a bare word elsewhere in the comment that merely happens
+to be a city name: a founder's surname, a product, a street.
+
+Ranking is not the only thing the state after a mention decides. A mention followed by a
+two-letter code that is **not** the city's own state is thrown out rather than ranked, because
+it names a different place of the same name — see :func:`_names_another_state` for why that
+veto is drawn as narrowly as it is. What stays ambiguous is a comment naming two configured
+cities, neither state-qualified and neither spelling longer: the earlier mention wins, which is
+a guess. ``docs/SOURCES.md`` records the same limit.
 
 What is written. One :class:`~ingest.base.CompanyRecord` per comment, with the comment as one
 :class:`~ingest.base.JobRecord` (``external_id`` = the HN item id) plus one job per
@@ -57,7 +81,7 @@ from ingest.base import (
     LocationRecord,
 )
 from ingest.classify import classify
-from ingest.config import ConnectorConfig, RegionsConfig
+from ingest.config import ConnectorConfig, RegionCity, RegionsConfig
 from ingest.contacts import EMAIL_IN_TEXT, normalize_email
 from ingest.htmlutil import html_to_text
 from ingest.http import RobotsDisallowed
@@ -85,6 +109,24 @@ _ROLE_BULLET = re.compile(
 _LEADING_NAME = re.compile(r"^\s*([A-Z][\w.&'’+-]*(?:\s+[A-Z0-9][\w.&'’+-]*){0,3})\b")
 _REMOTE = re.compile(r"\bremote\b", re.IGNORECASE)
 _WHITESPACE = re.compile(r"\s+")
+#: What may follow a city mention and name its state: a comma, then either a two-letter code
+#: (``", XX"``) or one or two written-out capitalised words. The written-out form must be
+#: capitalised so that ordinary prose behind a comma is not read as a state; a two-letter code
+#: is captured in any case, since ``_names_state`` still requires it to be the city's own before
+#: it promotes anything. Case matters only on the way out: ``_names_another_state`` vetoes on an
+#: all-capitals code alone, because a lowercase pair of letters behind a comma is as likely to
+#: be a word as a code.
+#:
+#: The code alternative ends on ``(?![\w-])`` rather than ``\b``, which a hyphen satisfies: this
+#: thread is written in all-capitals vernacular, so ``\b`` cut the first two letters out of
+#: ``", ON-SITE"`` and ``", IN-PERSON"`` and handed them to the veto as somebody else's state
+#: code, dropping the company outright (measured: one lost record in 742 live comments,
+#: 2026-09-08). What is left is the same word with a space in it — ``", ON SITE"`` still reads
+#: as a code — which no comment in that sample wrote and which this pattern cannot tell from a
+#: real code without a list of the fifty that exist.
+_STATE_AFTER_CITY = re.compile(
+    r"\s*,\s*(?P<state>[A-Za-z]{2}(?![\w-])|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"
+)
 
 
 class HnHiringOptions(BaseModel):
@@ -232,7 +274,7 @@ def parse_header(text: str, regions: RegionsConfig) -> Header:
         if url is None and (match := _URL.search(field)):
             url = match.group(0)
             continue
-        if location is None and _city_in(field, regions) is not None:
+        if location is None and find_city(field, regions) is not None:
             location = field
             continue
         if commitment is None and _looks_like_commitment(field):
@@ -252,20 +294,143 @@ def _looks_like_commitment(field: str) -> bool:
     return classify(field).employment_type is not enums.EmploymentType.UNKNOWN
 
 
-def _city_in(text: str, regions: RegionsConfig) -> str | None:
-    """The first configured city named anywhere in ``text`` (word-boundary, case-insensitive)."""
-    haystack = _WHITESPACE.sub(" ", text).casefold()
-    for entry in regions.cities:
-        needle = _WHITESPACE.sub(" ", entry.city).casefold()
-        index = haystack.find(needle)
-        while index != -1:
-            before = haystack[index - 1] if index else " "
-            after_index = index + len(needle)
-            after = haystack[after_index] if after_index < len(haystack) else " "
-            if not before.isalnum() and not after.isalnum():
-                return entry.city
-            index = haystack.find(needle, index + 1)
-    return None
+def _names_state(written: str, city: RegionCity) -> bool:
+    """Whether ``written`` — the text just after ``"City,"`` — names ``city``'s own state.
+
+    Two spellings answer to it and both are read off ``config/regions.yaml``: the state's code,
+    and — when the file gives one — the ``state_name`` that code is written out as. A city whose
+    region configures no ``state_name`` has no written-out spelling to recognise, so a qualifier
+    in words never promotes a mention of it; that costs the mention a rank and cannot cost the
+    record, since only :func:`_names_another_state` ever discards one and it reads codes alone.
+
+    Both comparisons are equality, after case-folding and whitespace normalisation. What stood
+    here before was a letter test — same first letter as the code, the code's second letter
+    somewhere after it — written that way to keep a table of the fifty state names out of a
+    connector (SPEC §11). It kept the table out and got the answer wrong: the test holds for a
+    code against its own state, and it also holds for a *neighbouring* state whose written-out
+    name happens to share those two letters, and for ordinary capitalised words behind a comma.
+    Rank 1 is what chooses between mentions, so a spurious promotion does not cost a rank, it
+    picks the wrong mention outright — measured live on 2026-09-08, a comment listing seven
+    offices was filed under the second one's metro because the place name written after it
+    letter-matched the first one's code. The state name belongs in the same file the code does,
+    and that is now where it is read from.
+    """
+    spelled = _WHITESPACE.sub(" ", written).strip().casefold()
+    if spelled == city.state.strip().casefold():
+        return True
+    return city.state_name is not None and spelled == city.state_name.strip().casefold()
+
+
+def _names_another_state(written: str, city: RegionCity) -> bool:
+    """Whether ``written`` — the text just after ``"City,"`` — is a two-letter code that is
+    **not** ``city``'s, which makes the mention evidence *against* this city rather than for it.
+
+    A configured name written out with somebody else's code is a different place that happens to
+    share the name. SPEC §12 Phase 7 created that surface: seven of the configured city names
+    also exist in states the file does not list, so before this check a company writing one of
+    them with its real state was still filed under the configured metro of the same name — the
+    qualifier failed to *promote* the mention and it then counted as a bare match anyway, which
+    is the wrong metro, and the wrong metro scopes what SPEC §8 will merge the company with.
+
+    The trigger is deliberately narrow because the evidence for it is narrow: a two-letter code
+    is unambiguous while prose is not. A written-out qualifier stays promote-only, because the
+    file names each configured state and no other: :func:`_names_state` can tell a city's own
+    written-out state from anything else, but "anything else" spans every state the config does
+    not configure, every country, and every capitalised word an English sentence puts after a
+    comma. Vetoing on all of those would drop the very mentions this connector exists to find.
+
+    Both letters must be capitalised, which is most of what separates a code from a word:
+    ``", CA"`` is a state, while the ``", or"`` of "…, or remote" and the ``", we"`` of
+    "…, we are hiring" are English. It is not all of it — the thread's own all-capitals
+    vernacular writes ``", ON SITE"``, which no rule short of a list of the fifty real codes can
+    tell from one — so :data:`_STATE_AFTER_CITY` refuses to cut a code out of a hyphenated word
+    and that spelling is the residue, unobserved in 742 live comments. A code that is not a US
+    state at all — a country abbreviation in ``", UK"`` — vetoes too, and should: it says just
+    as plainly that the poster meant somewhere else.
+    """
+    letters = written.strip()
+    return (
+        len(letters) == 2
+        and letters.isalpha()
+        and letters.isupper()
+        and not _names_state(letters, city)
+    )
+
+
+def find_city(text: str, regions: RegionsConfig) -> RegionCity | None:
+    """The configured city ``text`` names, or ``None`` — with its state, country and metro.
+
+    Every spelling of every configured city named anywhere in ``text`` is a candidate (whole
+    word, case-insensitive) — the canonical name and each alias, paired with the city it
+    resolves to by :attr:`~ingest.config.RegionsConfig.city_needles_longest_first`. Candidates
+    are ranked, in this order, by
+
+    1. whether the mention is immediately followed by its own state (:data:`_STATE_AFTER_CITY`),
+    2. the length of the *spelling that matched*, not of the city's canonical name,
+    3. where the mention starts.
+
+    One kind of mention is not a candidate at all: one immediately followed by a comma and a
+    two-letter code that is not the city's own state, which :func:`_names_another_state` reads
+    as the poster saying they mean a different place of the same name. It is dropped before the
+    ranking sees it, so it cannot win as a bare match either.
+
+    That drop is per *mention*, though, not per run of text, and it shows wherever one configured
+    spelling begins another. The qualifier sits after the longer spelling, where the shorter one
+    inside it cannot see it, so the shorter one is read as an unqualified mention of its own and
+    may still win. The shipped file has exactly one such pair. Leaving it is a choice rather than
+    an oversight: the shorter reading rescues a mention the veto was right to take, and equally
+    rescues one it was wrong to take, since a country abbreviation is also a capitalised
+    two-letter code and vetoes like a state's — including the abbreviation of the country every
+    configured city is in. Neither outcome has evidence behind it, and this phase adds a spelling
+    only on measured evidence, so the code does the simpler thing and this paragraph records that
+    it was decided rather than missed.
+
+    See the module docstring for what each rank buys and what is left ambiguous. Returning the
+    :class:`~ingest.config.RegionCity` rather than a name is the point of the function: the
+    caller needs the state, and it needs the *canonical* city, since an alias is a spelling to
+    match on and never a value to store — ``uq_locations_city_state`` gives one place one row.
+    Resolving a city *name* back to a state, which is what this connector used to do, silently
+    picks one of the states a name is configured in, so a company posting from the one that lost
+    was stored in another region's metro.
+
+    Rank 2 measures the needle because the needle is what was found: an alias can be shorter or
+    longer than the name it stands for, and ranking on canonical lengths would let a city
+    recognised by a short alias outrank one whose full name the poster wrote out. Walking
+    longest-needle-first settles ties between equally long spellings in file order and keeps a
+    longer spelling from being shadowed by a shorter one it contains. The length still appears
+    in the sort key because rank 1 crosses lengths — a shorter state-qualified spelling outranks
+    a longer bare one — which no iteration order alone can express.
+
+    A spelling's precision is its own length, and that is the standing cost of a short one. The
+    match runs to word-character boundaries, so a dot, a slash, an at-sign and a hyphen each end
+    a needle: a two-character spelling is a whole word inside a hostname, a path segment, an
+    address or a hyphenated compound, and a comment that names no other configured city can be
+    filed on one of those. A full city name is safe by accident — nothing else in a comment
+    happens to be it — and a short one is not, which is why ``config/regions.yaml`` admits a
+    spelling only on measured evidence and argues there against short ones. The trade is recorded
+    beside the spelling that carries it, since that file is where one is added or withdrawn.
+    """
+    haystack = _WHITESPACE.sub(" ", text)
+    found: RegionCity | None = None
+    best: tuple[int, int, int] | None = None
+    for spelling, entry in regions.city_needles_longest_first:
+        needle = _WHITESPACE.sub(" ", spelling).strip()
+        if not needle:
+            continue
+        # Matched on the original casing, not a casefolded copy: the state check downstream
+        # reads capitalisation, and ``str.casefold`` may change a string's length (so its
+        # offsets would no longer point into the text the poster wrote).
+        pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
+        for match in re.finditer(pattern, haystack, re.IGNORECASE):
+            qualifier = _STATE_AFTER_CITY.match(haystack, match.end())
+            written = qualifier.group("state") if qualifier is not None else None
+            if written is not None and _names_another_state(written, entry):
+                continue
+            qualified = written is not None and _names_state(written, entry)
+            rank = (0 if qualified else 1, -len(needle), match.start())
+            if best is None or rank < best:
+                found, best = entry, rank
+    return found
 
 
 def leading_name(text: str) -> str | None:
@@ -428,17 +593,21 @@ class HnHiringConnector(Connector[HnComment]):
         if not name or len(name) > 120:
             return self._skip("no_company_name", raw)
 
-        city = _city_in(header.location, self.regions) if header.location else None
+        configured = find_city(header.location, self.regions) if header.location else None
         matched_in = "header"
-        if city is None:
-            city = _city_in(text, self.regions)
+        if configured is None:
+            configured = find_city(text, self.regions)
             matched_in = "body"
-        if city is None:
+        if configured is None:
             return self._skip("outside_region", raw, header=header.fields)
-        configured = self.regions.lookup(city, _state_of(city, self.regions))
-        if configured is None:  # pragma: no cover - _city_in only returns configured cities
-            return self._skip("outside_region", raw, header=header.fields)
-        log.debug("hn_hiring.region", name=name, city=configured.city, matched_in=matched_in)
+        log.debug(
+            "hn_hiring.region",
+            name=name,
+            city=configured.city,
+            state=configured.state,
+            metro=configured.metro,
+            matched_in=matched_in,
+        )
 
         domain = extract_domain(text, self.options.ignore_link_hosts, self.options.strip_subdomains)
         contacts = tuple(
@@ -571,11 +740,3 @@ class HnHiringConnector(Connector[HnComment]):
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
         log.info("hn_hiring.skip", reason=reason, item_id=raw.item.get("id"), **details)
         return ()
-
-
-def _state_of(city: str, regions: RegionsConfig) -> str:
-    """The state of a configured city (``_city_in`` only ever returns configured names)."""
-    for entry in regions.cities:
-        if entry.city == city:
-            return entry.state
-    return ""

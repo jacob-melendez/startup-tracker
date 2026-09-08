@@ -29,6 +29,7 @@ from ingest.connectors.hn_hiring import (
     extract_domain,
     extract_emails,
     extract_role_bullets,
+    find_city,
     is_hiring_thread,
     leading_name,
     parse_header,
@@ -49,7 +50,7 @@ STORY_ID = 49522897
 DISCORD = 49525748  # San Francisco, pipe header
 SWINGVISION = 49559434  # Berkeley, prose header, three role bullets
 DELETED = 49524098
-FASTLY = 49523835  # header wrapped in asterisks, no Bay Area city
+FASTLY = 49523835  # header wrapped in asterisks, no configured city
 
 
 @pytest.fixture
@@ -218,6 +219,363 @@ def test_a_comment_with_no_pipes_has_no_header_company(regions: RegionsConfig) -
     assert leading_name("we are hiring") is None
 
 
+# --------------------------------------------------------- which city (find_city, SPEC §11)
+#
+# The three ranks of :func:`find_city`, one test each; then the two things the ranking is not —
+# the aliases that decide which spellings are candidates at all, and the veto that removes a
+# mention from the running before any of the ranks see it. All of them read the *shipped*
+# ``config/regions.yaml``: the pairs that make each rule matter — a city name inside another,
+# one name in two metros, one name in a state the file does not configure, the abbreviations
+# posters actually type — are properties of the file that ships, and a fixture config of
+# invented cities would prove the ranking sorts without proving it sorts the data this connector
+# will really meet.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("We are a small team hiring in South San Francisco.", id="bare"),
+        pytest.param("We are a small team hiring in South San Francisco, CA.", id="with state"),
+        pytest.param(
+            "Not San Francisco itself — the office is in South San Francisco.", id="both named"
+        ),
+    ],
+)
+def test_a_city_whose_name_contains_another_is_not_read_as_the_shorter_one(
+    text: str, regions: RegionsConfig
+) -> None:
+    """A bug that was live before §12 Phase 7: ``San Francisco`` is a whole-word match *inside*
+    ``South San Francisco`` and stands earlier in the file, so taking the first match in file
+    order filed every South San Francisco posting under San Francisco — a different city, and
+    on a national list a different metro entirely.
+
+    Three spellings, because each is defended by a different rank. In the first two the
+    contained name matches only inside the longer one, so it also starts later and rank 3 would
+    do; the ``", CA"`` is there because both mentions *end* at the same character, so a state
+    qualifier applies to the wrong one exactly as well as to the right one and rank 1 cannot
+    separate them. The third case is the one that isolates rank 2: the shorter name is written
+    out on its own and written first, so only the length of the configured name can prefer the
+    city the comment is actually about.
+    """
+    found = find_city(text, regions)
+    assert found is not None
+    assert found.city == "South San Francisco"
+
+
+def test_a_state_qualified_mention_beats_a_bare_city_name_elsewhere_in_the_body(
+    regions: RegionsConfig,
+) -> None:
+    """Rank 1. A bare configured name in a comment is often not a place at all — a founder's
+    surname, a product, a street — and a 48-city list meets far more of them than an 18-city
+    one did. A mention the poster wrote out with its state is the one they meant.
+
+    ``Austin`` and ``Boston`` are both six letters and the bare one comes first, so ranks 2
+    and 3 both favour the wrong answer here and only rank 1 can produce the right one.
+    """
+    found = find_city("Austin, our founder, is hiring. The team sits in Boston, MA.", regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == ("Boston", "MA", "Boston")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(
+            "Lucia | Director of Corp Dev | Remote (NYC / SEA / global overlap)",
+            ("New York", "NY", "New York"),
+            id="NYC",
+        ),
+        pytest.param(
+            "Uncountable | NY, SF, London and Toronto (In-Person) | Full-Stack Engineering",
+            ("San Francisco", "CA", "Bay Area"),
+            id="SF",
+        ),
+    ],
+)
+def test_a_comment_that_only_abbreviates_its_city_is_still_in_region(
+    text: str, expected: tuple[str, str, str], regions: RegionsConfig
+) -> None:
+    """SPEC §11: a comment naming a city only by a spelling ``config/regions.yaml`` lists under
+    ``aliases`` resolves to that city, with the canonical name, state and metro.
+
+    Both texts are real September 2026 "Who is hiring?" comments, from the 220 of 273 that named
+    no configured city and were dropped as out of region before this phase — 22 of those 220
+    write New York this way and 16 write San Francisco this way. That is the whole argument for
+    the key: a spelling this connector cannot see is not a near miss but a company thrown away,
+    so the alias list is the difference between reading a metro's comments and reading a
+    fraction of them. What is asserted is the *canonical* name, because an alias is a spelling
+    to match on and never a value to store.
+    """
+    found = find_city(text, regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == expected
+    # The canonical name is nowhere in the comment: only an alias can have matched it.
+    assert found.city not in text
+
+
+def test_a_bare_city_name_still_resolves_when_it_is_the_only_candidate(
+    regions: RegionsConfig,
+) -> None:
+    """Rank 1 orders candidates; it is not a filter. Most posters write a bare city and nothing
+    else, so a rule that *required* the state would throw away most of this connector's recall
+    (SPEC §7.1's principle, applied to geography: the ranking chooses between mentions, it
+    never rejects the only one there is)."""
+    found = find_city("Small team, our office is in Redmond, four days a week.", regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == ("Redmond", "WA", "Seattle")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Acme | Backend Engineer | Austin, MN | Full-time", id="header field"),
+        pytest.param("We are a small team in Cambridge, MD — apply within.", id="body prose"),
+        pytest.param("Hiring in Glendale, AZ (onsite four days a week).", id="parenthesised"),
+        pytest.param("Newton, KS. Full-time, onsite.", id="sentence end"),
+    ],
+)
+def test_a_configured_name_written_with_another_states_code_is_not_that_city(
+    text: str, regions: RegionsConfig
+) -> None:
+    """The veto. A configured city name immediately followed by a comma and a two-letter code
+    that is **not** that city's own state is not a mention of that city at all: it is a poster
+    naming a different place that happens to share the name, and it is thrown out before the
+    ranking rather than ranked (SPEC §11).
+
+    Every text here is a real US city in a state ``config/regions.yaml`` does not configure, and
+    each shares its name with one the file does. Without the veto the qualifier merely failed to
+    *promote* the mention, so it still counted as a bare match and still won — filing a company
+    that told you plainly where it was under a metro two time zones away, which then scopes what
+    SPEC §8 step 2 will merge it with. Being wrong about the metro is worse than having no
+    metro: an out-of-region comment is counted and visible, a misfiled one is neither.
+
+    Four spellings, because the qualifier has to be read the same wherever it sits: in a pipe
+    header field, mid-sentence, before a bracket, and at the end of a sentence.
+    """
+    assert find_city(text, regions) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "Acme | Chief of Staff | New York, ON-SITE (5 days) | Full-time", id="on-site"
+        ),
+        pytest.param("Hiring in Seattle, IN-PERSON, four days a week.", id="in-person"),
+        pytest.param("Our Boston, CA-based team is growing.", id="hyphen after a real code"),
+    ],
+)
+def test_a_hyphenated_word_after_a_city_is_not_read_as_a_state_code(
+    text: str, regions: RegionsConfig
+) -> None:
+    """The veto reads a two-letter code, and the token it reads has to be the whole word.
+
+    ``\\b`` is satisfied by a hyphen, so a pattern ending there cut ``ON`` out of ``", ON-SITE"``
+    and ``IN`` out of ``", IN-PERSON"`` and handed each to the veto as somebody else's state
+    code — dropping the company outright, since the veto discards rather than ranks. This thread
+    is written in all-capitals vernacular, so those are the shapes it really contains: one lost
+    record in 742 live comments on 2026-09-08, the first of them a real posting whose location
+    field was exactly the first case here.
+
+    The pattern ends on ``(?![\\w-])`` instead. The third case is the other half of that rule and
+    the one that keeps it honest: ``CA-based`` is a genuine code with a hyphen behind it, and it
+    must stop vetoing too — what the token test says is "these two letters are not a state code
+    here", never "this is not the code it looks like".
+
+    What is left is the same words with a space in them: ``", ON SITE"`` still reads as a code,
+    and nothing short of a list of the fifty real ones could tell it from one. No comment in that
+    sample wrote it, and that list is region logic ``config/regions.yaml`` owns (SPEC §11).
+    """
+    found = find_city(text, regions)
+    assert found is not None
+    assert found.city in text
+
+
+def test_the_veto_drops_a_mention_the_ranking_would_otherwise_have_preferred(
+    regions: RegionsConfig,
+) -> None:
+    """The veto has to happen *before* the ranking, not as a tie-break inside it.
+
+    Both names here are eight letters and neither mention is state-qualified for its own city,
+    so ranks 2 and 3 decide — and both favour the wrong one, which is written first. Only
+    discarding the mention outright can produce the right answer, which is what makes this the
+    case that distinguishes a veto from one more rank.
+    """
+    found = find_city("We started in Pasadena, TX and the team now sits in Berkeley.", regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == ("Berkeley", "CA", "Bay Area")
+
+
+def test_the_veto_throws_out_one_mention_and_not_the_city(regions: RegionsConfig) -> None:
+    """What is rejected is a mention, not a name. A comment that names the same city twice — once
+    as the other state's city and once as its own — is still a comment from the configured one,
+    so the second mention is ranked normally and wins.
+
+    A veto scoped to the city instead would turn every passing reference to a same-named place
+    into a dropped company, which trades one misfiling for a second one that is invisible."""
+    found = find_city("I grew up in Austin, MN; we are hiring in Austin, TX.", regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == ("Austin", "TX", "Austin")
+
+
+def test_the_code_that_vetoes_a_stranger_still_promotes_the_city_it_belongs_to(
+    regions: RegionsConfig,
+) -> None:
+    """Rank 1 survived the veto. The two read the same two letters after a mention, and it would
+    be an easy mistake for the narrowing to leave a matching code meaning nothing at all.
+
+    ``Cambridge`` is longer and written first, so ranks 2 and 3 both prefer it; only the state
+    the poster wrote out for the city they meant produces the other answer."""
+    found = find_city("Cambridge is where our founder studied. We hire in Austin, TX.", regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == ("Austin", "TX", "Austin")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(
+            "The team sits in Austin, Texas, and our founder studied in Cambridge.",
+            ("Austin", "TX", "Austin"),
+            id="promotes its own state",
+        ),
+        pytest.param(
+            "Office in Cambridge, England — remote-friendly.",
+            ("Cambridge", "MA", "Boston"),
+            id="never vetoes",
+        ),
+    ],
+)
+def test_a_written_out_qualifier_still_only_ever_costs_a_mention_a_rank(
+    text: str, expected: tuple[str, str, str], regions: RegionsConfig
+) -> None:
+    """A state written out in words behaves exactly as it did before the veto: it can promote a
+    mention and it can never discard one.
+
+    The promotion is now an *equality*, not a guess. ``config/regions.yaml`` carries a
+    ``state_name`` beside each ``state`` — how that code is spelled out — and ``_names_state``
+    compares the text after the comma against the code and that name, case- and
+    whitespace-folded. What stood here before was a letter heuristic, written precisely to avoid
+    putting a table of the fifty state names inside a connector when SPEC §11 keeps every such
+    literal in the config. It kept the table out of the code and got the answer wrong: it also
+    matched a *neighbouring* state's written-out name, and rank 1 is what chooses between
+    mentions, so a spurious promotion did not cost a rank, it picked the wrong mention outright.
+    The names went into the file the codes were already in, which is where they belonged.
+
+    The asymmetry survives, and is still the reason the veto reads two-letter codes only. The
+    file names the configured states and no others, so "not this city's state, written out"
+    spans every state the config omits, every country, and every capitalised word English puts
+    after a comma. The second case is what that costs and it is worth paying: a place named for
+    the one the config configures is filed under the configured metro, which is one wrong
+    record, while vetoing on prose would drop real comments behind every "…, or remote" and
+    "…, we are hiring", which is many. A region that configures no ``state_name`` simply stops
+    promoting — a rank, never a record.
+    """
+    found = find_city(text, regions)
+    assert found is not None
+    assert (found.city, found.state, found.metro) == expected
+
+
+def test_an_alias_matched_in_a_comment_is_stored_as_the_canonical_city(
+    connector: HnHiringConnector,
+) -> None:
+    """SPEC §5, §11: an alias is what matches the poster's text; the canonical name is what
+    reaches the database.
+
+    The header field is the abbreviation and nothing else, so only the alias can have matched —
+    and the ``LocationRecord`` still carries the one spelling this place is stored under, with
+    its own state and metro. Storing what the poster wrote instead would put a second row past
+    ``uq_locations_city_state`` for one city, which is the failure that makes an alias a lookup
+    key rather than an extra city in the file. The job keeps the poster's own words in
+    ``location_text``, since that field is what the comment said and not what it resolved to.
+    """
+    raw = HnComment(
+        story_id=STORY_ID,
+        story_title="Ask HN: Who is hiring? (September 2026)",
+        item={
+            "id": 3,
+            "type": "comment",
+            "time": 1788286616,
+            "text": "Acme | Backend Engineer | NYC | Full-time",
+        },
+    )
+
+    (record,) = connector.to_records(raw)
+
+    (location,) = record.locations
+    assert (location.city, location.state, location.metro, location.country) == (
+        "New York",
+        "NY",
+        "New York",
+        "US",
+    )
+    assert record.jobs[0].location_text == "NYC"
+    assert connector.skipped == {}
+
+
+def test_a_comment_whose_only_city_is_in_another_state_is_dropped_and_not_misfiled(
+    connector: HnHiringConnector,
+) -> None:
+    """The veto end to end, and the highest-value claim in this file: a company in a same-named
+    city in a state no region configures does not become a company in the configured metro.
+
+    It is dropped with the ordinary counted reason instead, which is the honest outcome — the
+    comment really is outside every configured region, and ``skipped`` is where a run reports
+    what it did not keep (SPEC §7.2). The alternative is not a lost record but a silently wrong
+    one: a wrong ``Location.metro`` is what the region filter reads and what SPEC §8 step 2
+    scopes name matches to, so it spreads.
+    """
+    raw = HnComment(
+        story_id=STORY_ID,
+        story_title="Ask HN: Who is hiring? (September 2026)",
+        item={
+            "id": 4,
+            "type": "comment",
+            "time": 1788286616,
+            "text": "Acme | Backend Engineer | Austin, MN | Full-time",
+        },
+    )
+
+    assert list(connector.to_records(raw)) == []
+    assert connector.skipped == {"outside_region": 1}
+
+
+def test_a_comment_from_a_second_metro_carries_that_metros_own_state_and_label(
+    connector: HnHiringConnector,
+) -> None:
+    """§12 Phase 7 end to end through the connector: a comment naming a city of a metro other
+    than the first configured one becomes a record in *that* metro.
+
+    Jersey City is deliberate. It is in the New York metro and not in New York state, so
+    ``config/regions.yaml`` writes it in the ``{name, state}`` mapping form, and the record can
+    only carry ``NJ`` if the state travelled with the matched entry. The connector used to
+    resolve a city *name* to a state by scanning for the first configured entry with that name,
+    which for any name two regions both use stored the company under the wrong state — and the
+    wrong metro then scopes what SPEC §8 will merge it with.
+    """
+    raw = HnComment(
+        story_id=STORY_ID,
+        story_title="Ask HN: Who is hiring? (September 2026)",
+        item={
+            "id": 2,
+            "type": "comment",
+            "time": 1788286616,
+            "text": "Acme | Backend Engineer | Jersey City, NJ | Full-time",
+        },
+    )
+
+    (record,) = connector.to_records(raw)
+
+    (location,) = record.locations
+    assert (location.city, location.state, location.metro, location.country) == (
+        "Jersey City",
+        "NJ",
+        "New York",
+        "US",
+    )
+    assert connector.skipped == {}
+
+
 # ------------------------------------------------------------------ extraction
 
 
@@ -354,6 +712,9 @@ def test_a_deleted_comment_is_skipped(connector: HnHiringConnector) -> None:
 def test_comments_outside_the_region_are_skipped(
     connector: HnHiringConnector, item_id: int
 ) -> None:
+    """Berlin, remote-EU, remote-US, Switzerland and Hong Kong: none of the 48 configured
+    cities appears in any of them, so each is dropped with a counted reason rather than stored
+    under whatever city a loose match found (SPEC §1, §7.2)."""
     assert records(connector, item_id) == []
     assert connector.skipped["outside_region"] == 1
 
@@ -369,7 +730,7 @@ def test_every_recorded_comment_is_either_mapped_or_counted(
     comment_ids = [item_id for item_id in ids if item(item_id).get("type") == "comment"]
     mapped = sum(len(records(connector, item_id)) for item_id in comment_ids)
     assert mapped + sum(connector.skipped.values()) == len(comment_ids)
-    assert mapped == 2  # Discord and SwingVision are the Bay Area comments
+    assert mapped == 2  # only Discord and SwingVision name a configured city
 
 
 def test_a_published_email_becomes_a_published_contact(regions: RegionsConfig) -> None:

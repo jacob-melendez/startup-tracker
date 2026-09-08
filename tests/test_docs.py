@@ -1,10 +1,17 @@
-"""``docs/SOURCES.md`` tracks the code (SPEC §4, §13).
+"""The documents track the code (SPEC §4, §13).
 
 SPEC §13's acceptance criterion is "``docs/SOURCES.md`` documents every connector's legal basis
 and rate limit". Documentation drifts silently, so the drift is a test failure: every connector
 in ``config/connectors.yaml`` must have a section, every section must state whether the source
 is an official API and what rate limit is applied, and the rate limit it states must be the one
 the config actually configures.
+
+The same idea has since been pointed at the two other documents that make checkable claims. The
+README states the schedule, the regions and the commands; ``cli.py``'s own header enumerates a
+closed roadmap of commands and counts them. Each of those is a fact stored twice, and the copy a
+reader trusts is never the one that runs — so every one of them is read back out of the document
+and compared with the config, the SPEC or the registry that decides it (SPEC §7.2, §11, §12
+Phase 7).
 """
 
 from __future__ import annotations
@@ -20,7 +27,7 @@ from typer.main import get_command
 import cli
 from db import enums, queries
 from ingest.base import CompanyTarget
-from ingest.config import UNIMPLEMENTED_CONNECTORS, load_connectors_config
+from ingest.config import UNIMPLEMENTED_CONNECTORS, load_connectors_config, load_regions_config
 from ingest.connectors import all_connectors
 from ingest.seed import SeedConnector
 
@@ -37,6 +44,30 @@ _README_CADENCE_ROW = re.compile(
 #: SPEC §11's repository tree names ``cli.py``'s commands in a trailing comment:
 #: "├── cli.py   # typer: migrate, seed, refresh, stats, merge-review".
 _SPEC_CLI_COMMANDS = re.compile(r"cli\.py\s+#\s*typer:\s*(?P<commands>.+)$", re.MULTILINE)
+#: ``cli.py``'s header opens by counting its own commands ("Seven commands.") and goes on to say
+#: how many of them SPEC §11 names ("SPEC §11 names five"). Both are a number written as prose,
+#: and neither is the number that decides anything — the registry and SPEC's tree are.
+_CLI_HEADER_COUNT = re.compile(r"\b(?P<word>[A-Za-z]+) commands\b")
+_CLI_HEADER_SPEC_COUNT = re.compile(r"SPEC §11 names (?P<word>[a-z]+)\b")
+#: One command's bullet in that header: "* ``sync-regions`` — the same idea for …".
+_CLI_HEADER_BULLET = re.compile(r"^\* ``(?P<name>[a-z-]+)``", re.MULTILINE)
+#: Number words, indexed by the number they spell. Far enough to outlast any plausible command
+#: list; a header that counted higher than this is a header worth reading by hand anyway.
+NUMBER_WORDS = (
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+)
 #: A section heading names one or more connectors in backticks: "## `greenhouse` — …" or
 #: "## Applicant tracking systems — `greenhouse`, `lever`, `ashby`, `workable`".
 _HEADING = re.compile(r"^##\s+(?P<title>.+)$", re.MULTILINE)
@@ -133,6 +164,19 @@ def registered_cli_commands() -> frozenset[str]:
     return frozenset(group.commands)
 
 
+def spelled(word: str) -> int:
+    """``"Seven"`` → 7. A word that names no number fails the test that asked, naming it.
+
+    Failing rather than returning a sentinel because there is no sensible comparison to make
+    with one: a header that opens "Several commands." has stopped stating the fact this file
+    exists to check, and that is the finding, not a mismatched count.
+    """
+    try:
+        return NUMBER_WORDS.index(word.lower())
+    except ValueError:
+        pytest.fail(f"cli.py's header counts commands as {word!r}, which spells no number")
+
+
 # ------------------------------------------------- SPEC §6 claims the code has to keep
 
 
@@ -224,6 +268,43 @@ def test_cli_py_reconciles_its_command_set_with_the_spec_section_it_cites() -> N
         )
     for deferred in sorted(specified - registered):
         assert deferred in doc, f"SPEC §11 names {deferred!r}; cli.py must say when it arrives"
+
+
+def test_cli_pys_header_counts_the_commands_it_actually_registers() -> None:
+    """The header opens "Seven commands." and then documents each of them, so both the number
+    and the list are claims about the registry sitting a thousand lines below them.
+
+    The number is the half that rots silently. Adding a command and its bullet leaves a header
+    that reads correctly line by line and is wrong in its first sentence — which is exactly the
+    state Phase 6's "Six commands" was in the moment ``sync-regions`` was registered, and the
+    kind of small untruth that teaches a reader to stop trusting the header at all. The second
+    number in the same sentence is checked against SPEC §11's own tree rather than against a
+    memory of it, so implementing a sixth specified command moves it here too.
+
+    The bullet list is compared as a *set*: a registered command with no bullet is undocumented,
+    and a bullet for a command nobody registers is a promise the CLI does not keep.
+    """
+    doc = cli.__doc__ or ""
+    registered = registered_cli_commands()
+
+    counted = _CLI_HEADER_COUNT.search(doc)
+    assert counted is not None, "cli.py's header no longer opens by counting its commands"
+    assert spelled(counted["word"]) == len(registered), (
+        f"cli.py's header says {counted['word']!r} commands; it registers "
+        f"{len(registered)}: {sorted(registered)}"
+    )
+
+    named = _CLI_HEADER_SPEC_COUNT.search(doc)
+    assert named is not None, "cli.py's header no longer says how many commands SPEC §11 names"
+    match = _SPEC_CLI_COMMANDS.search(SPEC.read_text(encoding="utf-8"))
+    assert match is not None, "SPEC §11's tree no longer lists cli.py's commands"
+    specified = {name.strip() for name in match.group("commands").split(",")}
+    assert spelled(named["word"]) == len(specified), (
+        f"cli.py's header says SPEC §11 names {named['word']!r} commands; §11's tree names "
+        f"{len(specified)}: {sorted(specified)}"
+    )
+
+    assert set(_CLI_HEADER_BULLET.findall(doc)) == set(registered)
 
 
 # ------------------------------------------- README claims about the schedule (SPEC §7.2)
@@ -412,3 +493,129 @@ def test_the_document_does_not_claim_an_unchanged_site_rewrites_nothing() -> Non
     text = SOURCES.read_text(encoding="utf-8")
     assert "rewrites nothing" not in text
     assert "refreshes that row's `source_id`" in text
+
+
+# --------------------------------- README claims about the regions (SPEC §11, §12 Phase 7)
+
+#: A run of Title-Case names read as a list: "Bay Area, New York, Seattle and Austin". Consulted
+#: only when two of its items are already configured metros, which is what stops it reading a
+#: list of connectors, of cities or of Compose services as a list of regions.
+_TITLE_CASE_ITEM = r"[A-Z][a-z]+(?: [A-Z][a-z]+)*"
+_NAME_LIST = re.compile(rf"{_TITLE_CASE_ITEM}(?:, {_TITLE_CASE_ITEM})+(?: and {_TITLE_CASE_ITEM})?")
+#: The heading of the ``stats`` sample's per-metro block, matched on a wildcard word: which word
+#: joins "companies" to "metro" is pinned against the command's real output in
+#: ``tests/test_cli_ops.py``, and asserting it here too would mean two tests failing over one.
+_README_METRO_HEADING = re.compile(r"^companies \w+ metro\b.*$", re.MULTILINE)
+#: One row of that block: "  Bay Area     2087".
+_README_METRO_COUNT_ROW = re.compile(r"^ {2}(?P<metro>\S.*?) {2,}\d+$")
+
+
+def readme_section(title: str) -> str:
+    """The body of one ``##`` section of the README, whitespace collapsed.
+
+    Collapsed because the README is hand-wrapped at 100 columns: a needle that happened to span
+    a line break would test where the wrapping fell rather than what the sentence says, and the
+    claims below have to survive a reflow of the paragraph they sit in.
+    """
+    text = README.read_text(encoding="utf-8")
+    start = text.index(f"\n## {title}\n")
+    end = text.find("\n## ", start + 1)
+    return " ".join(text[start : len(text) if end == -1 else end].split())
+
+
+def readme_sample_metros() -> list[str]:
+    """The metros named in the ``stats`` sample's per-metro block, in the order printed."""
+    text = README.read_text(encoding="utf-8")
+    heading = _README_METRO_HEADING.search(text)
+    if heading is None:
+        return []
+    found: list[str] = []
+    # The heading match stops before its newline, so the first element is that line's remainder.
+    for line in text[heading.end() :].splitlines()[1:]:
+        row = _README_METRO_COUNT_ROW.match(line)
+        if row is None:
+            break
+        found.append(row["metro"])
+    return found
+
+
+def readme_listed_metros(configured: set[str]) -> list[str]:
+    """Every item of every Title-Case list in the README that already names two configured
+    metros — the *whole* list, including any item that is not one.
+
+    Two known metros is what identifies a sentence as an enumeration of regions; taking the
+    whole list from there is what gives the check something to catch, since the failure this
+    guards against is a name left in a list after the config stopped defining it.
+    """
+    found: list[str] = []
+    for match in _NAME_LIST.finditer(" ".join(README.read_text(encoding="utf-8").split())):
+        items = re.split(r", | and ", match.group(0))
+        if len(set(items) & configured) >= 2:
+            found.extend(items)
+    return found
+
+
+def test_every_metro_the_readme_names_is_one_the_shipped_config_defines() -> None:
+    """``config/regions.yaml`` is the only place a metro is defined (SPEC §11), and the README is
+    the one document that names the shipped ones on purpose — the literal guard in
+    ``tests/test_regions.py`` exempts prose precisely so it can.
+
+    Exempt is not unchecked. A metro dropped from the config leaves the README promising a region
+    the app has never heard of, in the two places a reader takes for current: the enumerations
+    ("six metros ship — …") and the ``stats`` sample, which is a screenshot of a database that
+    was configured differently. Both are read back and both must name only configured metros —
+    the same reconciliation the cadence table gets against ``config/connectors.yaml``.
+
+    The reverse direction is deliberately not asserted. Prose may name a subset — "Bay Area and
+    Austin, say" is a legitimate sentence — and a sample of a real database is under no
+    obligation to have ingested every region.
+    """
+    configured = {region.metro for region in load_regions_config().regions}
+    sample = readme_sample_metros()
+    listed = readme_listed_metros(configured)
+
+    assert sample, "the README's `stats` sample no longer shows its per-metro block"
+    assert listed, "the README no longer enumerates the shipped metros anywhere in its prose"
+    assert set(sample) <= configured, (
+        f"the README's stats sample shows {sorted(set(sample) - configured)}, which "
+        "config/regions.yaml does not configure"
+    )
+    assert set(listed) <= configured, (
+        f"the README's prose names {sorted(set(listed) - configured)}, which "
+        "config/regions.yaml does not configure"
+    )
+
+
+def test_the_readme_regions_section_documents_the_flag_and_the_order_of_operations() -> None:
+    """The two things about SPEC §11's expansion hook that a reader cannot get from the file
+    format, and both of them decide what happens to data.
+
+    ``enabled: false`` is the one-line switch, and what it conspicuously does *not* do is delete
+    anything: rows keep the metro they were ingested with because the database is the historical
+    record (SPEC §2), which is why a disabled metro can still appear in the Region filter. A
+    reader who expected the flag to tidy up after itself files that as a bug.
+
+    The order of operations is the other. ``sync-regions`` relabels what is stored and ``refresh``
+    ingests what is new; documented the other way round, the sweep runs before the rows it would
+    have relabelled exist, and the operator is left with the exact symptom the command was
+    written to cure. The dry run comes first because a sweep over every stored city is the kind
+    of thing you ask before you tell.
+    """
+    section = readme_section("Regions")
+
+    assert "`enabled: false`" in section, "the one-line switch of SPEC §11 is undocumented"
+    assert "out of ingestion" in section, "what `enabled: false` stops has to be said"
+    assert "historical record" in section, (
+        "`enabled: false` must be documented as changing nothing already stored (SPEC §2)"
+    )
+
+    assert "python cli.py sync-regions --dry-run" in section, "a sweep is reviewed before it runs"
+    assert "in this order" in section, "the two steps are an order, not a menu"
+    assert section.index("cli.py sync-regions") < section.index("make refresh"), (
+        "sync-regions relabels what is stored and refresh ingests what is new; in the other "
+        "order the sweep runs before the rows it would relabel exist"
+    )
+
+    # The claim the command's own docstring makes, in the document read before the docstring is.
+    assert "no `fetch_runs` row is written" in section
+    assert "sync-regions" in registered_cli_commands(), "the README names a command that must exist"

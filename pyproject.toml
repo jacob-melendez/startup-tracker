@@ -1,7 +1,8 @@
 [project]
 name = "startup-tracker"
 version = "0.1.0"
-description = "Locally-run tracker of Bay Area startups and their open roles (see docs/SPEC.md)"
+# No metro is named here (SPEC §12 Phase 7): config/regions.yaml decides which ones are tracked.
+description = "Locally-run tracker of US startup-hub companies and their open roles (see docs/SPEC.md)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 # Runtime dependencies (SPEC §3). The five web ones (fastapi, jinja2, uvicorn,

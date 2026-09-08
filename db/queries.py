@@ -24,8 +24,8 @@ Phase 4 (SPEC §9) adds the browse layer the web app reads:
 * :func:`company_jobs` — every role of one company, deliberately unfiltered by anything the
   *page* asked for (SPEC §9's expanded row shows all roles regardless of the page-level
   filter), ordered and narrowed only by the in-row controls of that same sentence;
-* :func:`facet_cities`, :func:`facet_sectors`, :func:`last_successful_runs` — the small lookups
-  the filter form and ``/runs`` need.
+* :func:`facet_cities`, :func:`facet_metros`, :func:`facet_sectors`,
+  :func:`last_successful_runs` — the small lookups the filter form and ``/runs`` need.
 
 Phase 6 (SPEC §7.2, §8, §12 Phase 6) adds the operations layer the scheduler, ``/runs`` and the
 two new CLI commands share:
@@ -36,6 +36,17 @@ two new CLI commands share:
 * :func:`merge_candidate_rows` and :func:`merge_companies` — the read and the write behind
   ``cli.py merge-review``, which is the only thing in the system allowed to delete a company
   (SPEC §8 "Do not auto-merge").
+
+Phase 7 (SPEC §12 Phase 7) widens the geography this layer already knew how to filter on, and
+adds nothing to the schema — ``locations.metro`` has carried the region since Phase 1:
+
+* :attr:`Filters.metros` — the region selector, a filter beside City rather than a global scope
+  switch, composed with the same semi-join shape so a company with three offices in one metro is
+  still one row;
+* :func:`facet_metros` and the widened :func:`facet_cities` — the two selects that offer them,
+  the second now carrying each city's state and metro so the form can group and disambiguate;
+* :attr:`StatsSnapshot.companies_by_metro` — the operational "did the new region ingest
+  anything?" line of ``cli.py stats``.
 
 None of it fetches anything: a web request handler only ever reads the local database (SPEC §2).
 """
@@ -64,6 +75,7 @@ from sqlalchemy import (
     bindparam,
     case,
     delete,
+    distinct,
     exists,
     false,
     func,
@@ -352,6 +364,13 @@ class Filters:
 
     q: str | None = None
     cities: tuple[str, ...] = ()
+    #: SPEC §12 Phase 7's region selector, filtering ``locations.metro``. Independent of
+    #: :attr:`cities` rather than a parent of it: the two are separate ``AND`` predicates, so a
+    #: company given both a ``metro`` and a ``city`` matches only when it has an office
+    #: answering each — the UI never has to repopulate one select when the other changes, and a
+    #: city chosen from one metro beside a metro that does not contain it is an empty page
+    #: rather than an error.
+    metros: tuple[str, ...] = ()
     sector_slugs: tuple[str, ...] = ()
     stages: tuple[enums.Stage, ...] = ()
     round_types: tuple[enums.RoundType, ...] = ()
@@ -458,6 +477,33 @@ class CompanyExtras:
             if location.is_hq:
                 return location.city
         return self.locations[0].city if self.locations else None
+
+    def matched_office(self, filters: Filters) -> str | None:
+        """The office that put this row in a geographically filtered list, when the row is not
+        already naming it — else ``None``.
+
+        SPEC §9's collapsed row names one city, the HQ. A company headquartered in one metro
+        with an office in another matches a filter on *either* (:func:`_company_predicates`
+        asks whether **any** of its locations qualifies, which is the only reading that does
+        not hide a real office), and the row then shows a city outside the filter with nothing
+        to say why it is there. On the live Y Combinator data that is 19 of the 300 rows across
+        the six single-region filters — enough that the region selector reads as broken.
+
+        So the row names the office it matched on as well. This returns only the *second*
+        city: ``None`` when nothing geographic is filtered, when the HQ already satisfies the
+        filter, and when no location does (which cannot happen for a row the filter returned,
+        but a caller may hold extras for a row it fetched some other way).
+
+        Both geographic filters are honoured, not just the new one — filtering to a city has
+        always been able to return a company whose HQ is elsewhere, and the row was as silent
+        about it then as it would be now.
+        """
+        if not filters.metros and not filters.cities:
+            return None
+        for location in self.locations:
+            if location.metro in filters.metros or location.city in filters.cities:
+                return None if location.city == self.hq_city else location.city
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -701,6 +747,19 @@ def _company_predicates(filters: Filters, *, now: datetime) -> list[ColumnElemen
             select(Location.id)
             .join(CompanyLocation, CompanyLocation.location_id == Location.id)
             .where(CompanyLocation.company_id == Company.id, Location.city.in_(filters.cities))
+            .correlate(Company)
+            .exists()
+        )
+    if filters.metros:
+        # The region selector (SPEC §12 Phase 7), and a semi-join for exactly the reason city
+        # is one: a company with three offices in one metro must still be one row, or the page
+        # size and the keyset order both break. Its own ``EXISTS`` rather than an arm of the
+        # city predicate, because each subquery scopes its own ``locations`` — that is what
+        # makes metro and city independent ``AND``s instead of one geography.
+        predicates.append(
+            select(Location.id)
+            .join(CompanyLocation, CompanyLocation.location_id == Location.id)
+            .where(CompanyLocation.company_id == Company.id, Location.metro.in_(filters.metros))
             .correlate(Company)
             .exists()
         )
@@ -979,7 +1038,7 @@ async def company_list_page(
 ) -> Page[CompanyRow]:
     """One page of ``/`` — SPEC §9's company list, filtered, sorted and keyset-paginated.
 
-    This docstring is the composition strategy SPEC §12 Phase 4 asks for: how eleven
+    This docstring is the composition strategy SPEC §12 Phase 4 asks for: how twelve
     independent filters, six sorts and pagination end up as *one* parameterized statement.
 
     **One statement, one list of predicates.** Every §9 filter contributes zero or one boolean
@@ -1017,10 +1076,12 @@ async def company_list_page(
     however many role filters are on, answered by ``ix_jobs_role_family_closed_at`` /
     ``ix_jobs_employment_type_closed_at``.
 
-    **City and sector are semi-joins for the same reason.** Both are M:N; an inner join through
-    ``company_locations`` would emit a company once per matching city, inflating the page and
-    corrupting the keyset order. ``EXISTS`` returns each company at most once and stops at the
-    first match.
+    **City, region and sector are semi-joins for the same reason.** All three are M:N; an inner
+    join through ``company_locations`` would emit a company once per matching city, inflating the
+    page and corrupting the keyset order — and a metro, which several of a company's cities can
+    share, fans out harder than a city does. ``EXISTS`` returns each company at most once and
+    stops at the first match. City and region get one ``EXISTS`` each, so they read as two
+    independent ``AND``s over possibly different offices rather than one combined geography.
 
     **Search is one OR arm, not a second query.** ``search_vector @@ websearch_to_tsquery
     ('english', :q)`` — the GIN-indexed generated column of SPEC §5 — OR pg_trgm's ``%``
@@ -1331,13 +1392,60 @@ async def company_jobs(
 # --------------------------------------------------------------- facets and run health (§9)
 
 
-async def facet_cities(session: AsyncSession) -> list[str]:
-    """Every city the filter form offers, alphabetically.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CityFacet:
+    """One option of the City select: the city, its state, and the metro it belongs to.
+
+    The metro travels with the city so the form can group the options (SPEC §12 Phase 7 turns
+    one region's city list into six regions', and a flat list of that length is not a control
+    anyone can use), and the state so two same-named cities in different states can be told
+    apart on screen. Neither is part of the wire value — see :func:`facet_cities`.
+    """
+
+    city: str
+    state: str
+    metro: str
+
+
+async def facet_cities(session: AsyncSession) -> list[CityFacet]:
+    """Every city the filter form offers, ordered by metro then city.
 
     Drawn from ``locations`` rather than ``config/regions.yaml`` so the form offers what the
-    database actually holds; the config decides which cities are *ingested* (SPEC §11).
+    database actually holds; the config decides which cities are *ingested* (SPEC §11). The two
+    differ in both directions and both are honest: a configured city nothing has been ingested
+    for yet would filter to an empty page, and a city whose region was disabled — or that was
+    ingested before the config named it — is still in the database, which SPEC §2 keeps as the
+    historical record.
+
+    **The ``city=`` wire value stays the bare city name.** ``state`` and ``metro`` are carried
+    for display only — grouping the select and disambiguating a repeated name — so every URL
+    bookmarked before SPEC §12 Phase 7 keeps meaning what it meant, and the filter keeps matching
+    ``locations.city`` alone (a name in two states matches both, deliberately: the region filter
+    is how you narrow it).
+
+    No ``DISTINCT``: ``uq_locations_city_state`` already makes ``locations`` one row per
+    ``(city, state)``, and each of those rows carries exactly one metro. ``state`` is the final
+    tiebreak so the order is total and the rendered list is stable between requests.
     """
-    rows = await session.execute(select(Location.city).distinct().order_by(Location.city))
+    rows = await session.execute(
+        select(Location.city, Location.state, Location.metro).order_by(
+            Location.metro, Location.city, Location.state
+        )
+    )
+    return [CityFacet(city=city, state=state, metro=metro) for city, state, metro in rows]
+
+
+async def facet_metros(session: AsyncSession) -> list[str]:
+    """Every region the filter form offers, alphabetically — SPEC §12 Phase 7's selector.
+
+    Like :func:`facet_cities` it reads ``locations`` rather than ``config/regions.yaml``, for the
+    same reason and one more: the config's metro list is what will be *ingested next*, while this
+    list is what can be filtered on *now*. A region added to the config this morning is therefore
+    absent until a run stores a city of it, and a region switched off in the config still appears
+    for as long as its rows do — which is the honest answer rather than a bug, since those rows
+    are still there to be browsed (SPEC §2).
+    """
+    rows = await session.execute(select(Location.metro).distinct().order_by(Location.metro))
     return list(rows.scalars())
 
 
@@ -1495,6 +1603,14 @@ class StatsSnapshot:
     #: ``first_seen_at >= now - STATS_WINDOW_DAYS``.
     companies_added: int
     jobs_added: int
+    #: ``(metro, companies)`` for every region with at least one company, most companies first
+    #: then metro alphabetically — the operational answer to "did the new region of SPEC §12
+    #: Phase 7 actually ingest anything?". A company is counted **once per metro it has a
+    #: location in**, so one with offices in two metros appears in both counts and the section
+    #: sums to more than :attr:`companies`; the printed report says so. A metro no company sits
+    #: in is absent rather than zero — only the database's own metros are listed, never the
+    #: config's, so this reports what was ingested and not what was asked for.
+    companies_by_metro: tuple[tuple[str, int], ...] = ()
 
 
 def _count_of(entity: Any, *predicates: ColumnElement[bool]) -> ScalarSelect[int]:
@@ -1502,22 +1618,73 @@ def _count_of(entity: Any, *predicates: ColumnElement[bool]) -> ScalarSelect[int
     return select(func.count()).select_from(entity).where(*predicates).scalar_subquery()
 
 
-async def stats_snapshot(session: AsyncSession, *, now: datetime) -> StatsSnapshot:
-    """The row counts, the two lifecycle splits and the 7-day intake — one round trip.
+def _companies_by_metro() -> Any:
+    """The per-metro company counts as a **one-row** sub-select of two parallel arrays.
 
-    Shape — a ``SELECT`` with **no FROM clause** whose every column is an independent scalar
-    sub-select (``SELECT (SELECT count(*) FROM companies) AS companies, (SELECT count(*) FROM
-    jobs WHERE closed_at IS NULL) AS jobs_open, ...``). Nineteen counts over nine unrelated
-    tables have no join key in common, so joining them would either multiply rows or need
-    nineteen ``GROUP BY`` queries; sub-selects keep it to one statement, which matters twice
-    over: it is one round trip, and it is one snapshot — every number is read at the same
-    MVCC instant, so the report cannot say 3,188 companies in one line and imply 3,190 in
-    another because an ingest run committed in between.
+    :attr:`StatsSnapshot.companies_by_metro` is the one entry of the report that is a row per
+    metro rather than a number, so unlike every other column it cannot be a scalar sub-select.
+    Folding it into ``array_agg`` is what lets it ride inside the same single statement instead
+    of becoming a second query — and that matters for correctness, not tidiness: under
+    ``READ COMMITTED`` a second statement reads a *second* snapshot, so an ingest run committing
+    between the two could make the per-region section disagree with the company total printed
+    two lines above it.
+
+    ``count(DISTINCT company_id)`` rather than ``count(*)``: the count is of companies, and a
+    company with three offices in one metro is one company there. Across metros the same company
+    is counted again in each, which is the intended reading (SPEC §12 Phase 7 asks whether a
+    region ingested anything, not how the companies partition).
+
+    The two aggregates share one ``ORDER BY (companies DESC, metro ASC)`` over the same grouped
+    rows, and ``metro`` is the group key, so that ordering is *total* and the arrays line up
+    element for element; the caller's ``zip(..., strict=True)`` asserts the pairing rather than
+    trusting it. Both are NULL — not empty arrays — when no company has a location at all.
+    """
+    per_metro = (
+        select(
+            Location.metro.label("metro"),
+            func.count(distinct(CompanyLocation.company_id)).label("companies"),
+        )
+        .join(CompanyLocation, CompanyLocation.location_id == Location.id)
+        .group_by(Location.metro)
+        .subquery("companies_per_metro")
+    )
+    by_count = (per_metro.c.companies.desc(), per_metro.c.metro.asc())
+    return (
+        select(
+            func.array_agg(aggregate_order_by(per_metro.c.metro, *by_count)).label("metro_names"),
+            func.array_agg(aggregate_order_by(per_metro.c.companies, *by_count)).label(
+                "metro_counts"
+            ),
+        )
+        .select_from(per_metro)
+        .subquery("metro_rollup")
+    )
+
+
+async def stats_snapshot(session: AsyncSession, *, now: datetime) -> StatsSnapshot:
+    """The row counts, the two lifecycle splits, the 7-day intake and the per-region rollup —
+    one round trip.
+
+    Shape — one ``SELECT`` whose nineteen counts are each an independent scalar sub-select
+    (``SELECT (SELECT count(*) FROM companies) AS companies, (SELECT count(*) FROM jobs WHERE
+    closed_at IS NULL) AS jobs_open, ...``). Nineteen counts over nine unrelated tables have no
+    join key in common, so joining them would either multiply rows or need nineteen ``GROUP BY``
+    queries; sub-selects keep it to one statement, which matters twice over: it is one round
+    trip, and it is one snapshot — every number is read at the same MVCC instant, so the report
+    cannot say 3,188 companies in one line and imply 3,190 in another because an ingest run
+    committed in between.
+
+    The twentieth entry, ``companies_by_metro`` (SPEC §12 Phase 7), is a row per metro and so
+    cannot be a scalar sub-select. It is the statement's only ``FROM`` clause:
+    :func:`_companies_by_metro` grouped, aggregated down to a single row of two arrays, and
+    cross-joined in — a one-row relation, so ``.one()`` still holds and the snapshot guarantee
+    above extends to it. Read that function for why it is not simply a second query.
 
     ``now`` is injected rather than read from the clock so a test can pin the boundary of the
     :data:`STATS_WINDOW_DAYS` window; the window is a half-open ``first_seen_at >= now - 7d``.
     """
     since = now - timedelta(days=STATS_WINDOW_DAYS)
+    rollup = _companies_by_metro()
     row = (
         await session.execute(
             select(
@@ -1546,7 +1713,9 @@ async def stats_snapshot(session: AsyncSession, *, now: datetime) -> StatsSnapsh
                 _count_of(JobBookmark).label("job_bookmarks"),
                 _count_of(Company, Company.first_seen_at >= since).label("companies_added"),
                 _count_of(Job, Job.first_seen_at >= since).label("jobs_added"),
-            )
+                rollup.c.metro_names,
+                rollup.c.metro_counts,
+            ).select_from(rollup)
         )
     ).one()
     return StatsSnapshot(
@@ -1569,6 +1738,11 @@ async def stats_snapshot(session: AsyncSession, *, now: datetime) -> StatsSnapsh
         job_bookmarks=row.job_bookmarks,
         companies_added=row.companies_added,
         jobs_added=row.jobs_added,
+        # ``array_agg`` over no rows is NULL, not an empty array; ``strict`` asserts the two
+        # arrays are the same length, which the shared total ORDER BY guarantees.
+        companies_by_metro=tuple(
+            zip(row.metro_names or (), row.metro_counts or (), strict=True),
+        ),
     )
 
 

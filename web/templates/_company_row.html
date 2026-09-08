@@ -1,7 +1,9 @@
 {%- import "_chips.html" as chips -%}
 {#-
   One collapsed company row (SPEC §9): name, HQ city, sector chips, latest round + amount +
-  date, open role count, and the compact open-role-family breakdown.
+  date, open role count, and the compact open-role-family breakdown — plus, when the page is
+  filtered by region or city and this company matched on an office that is not the one named
+  above, that office (see `CompanyExtras.matched_office`).
 
   Expansion is a native `<details>` — keyboard reachable and openable with no JavaScript at
   all — whose `toggle` event htmx uses to fetch the panel exactly once (`toggle once`). The
@@ -27,6 +29,13 @@
     <span class="summary-meta">
       {%- if extra.hq_city %}
       <span>{{ extra.hq_city }}</span>
+      {%- endif %}
+      {#- The office the row matched on, when the city above is not it. A company HQ'd in one
+          region with an office in another is a real hit for either, so a region-filtered list
+          that showed only the HQ would read as though the filter had leaked. -#}
+      {%- set matched_office = extra.matched_office(filters) %}
+      {%- if matched_office %}
+      <span class="muted">{{ matched_office }} office</span>
       {%- endif %}
       {%- if row.stage and row.stage != 'unknown' %}
       <span class="muted">{{ row.stage | label }}</span>

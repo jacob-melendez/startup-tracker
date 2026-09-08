@@ -1,23 +1,26 @@
 # startup-tracker
 
-A locally-run tracker of Bay Area startups and their open roles. Scheduled connectors fill a
+A locally-run tracker of startups and their open roles across the US hubs named in
+`config/regions.yaml` — Bay Area, New York, Seattle, Boston, Los Angeles and Austin as shipped,
+and whatever you edit that file to say (see [Regions](#regions)). Scheduled connectors fill a
 Postgres 16 database; a server-rendered UI browses it. `docs/SPEC.md` is the source of truth;
 `CLAUDE.md` lists the non-negotiables; `docs/SOURCES.md` documents every data source; and
 `docs/ARCHITECTURE.md` explains how the ingest path fits together.
 
 ## Setup and first run
 
-From a clean checkout to a database worth looking at is six commands and about half an hour,
-most of it spent being polite to other people's servers. Each step says what "good" looks like,
-so you can tell a slow step from a broken one.
+From a clean checkout to a database worth looking at is six commands and about an hour, most of
+it spent being polite to other people's servers. Each step says what "good" looks like, so you
+can tell a slow step from a broken one. The two long steps are long in proportion to how many
+regions `config/regions.yaml` has enabled; the times below are for the six that ship.
 
 ```sh
 cp .env.example .env      # 1. then set CONTACT_EMAIL — see below
 make up                   # 2. Postgres 16 + the web app + the scheduler (~1 min first time)
 make migrate              # 3. alembic upgrade head (~2 s)
 make seed                 # 4. the Bay Area bootstrap list (SPEC §10) (~2 min)
-make refresh CONNECTOR=sec_edgar   # 5. one connector, to prove the plumbing (~1 min)
-make refresh                       # 6. --all: every enabled connector (~20-30 min)
+make refresh CONNECTOR=sec_edgar   # 5. one connector, to prove the plumbing (~10 min first run)
+make refresh                       # 6. --all: every enabled connector (~30 min)
 ```
 
 1. **`cp .env.example .env`, then set `CONTACT_EMAIL`.** SEC EDGAR's fair-access policy requires
@@ -39,16 +42,20 @@ make refresh                       # 6. --all: every enabled connector (~20-30 m
    `seed  status=ok  fetched=58  upserted=58  duration=118.4s`. A handful of `status='dead'`
    rows in the log is normal — see [Seeding](#seeding).
 5. **`make refresh CONNECTOR=sec_edgar`.** One connector, so a configuration problem surfaces
-   before you wait out a full sweep. Good: `sec_edgar  status=ok  fetched=... upserted=...`
+   before you wait out a full sweep — and on a fresh database this is the single longest
+   connector run there is: the first `sec_edgar` run backfills 18 months and searches every
+   configured city separately, so its length is set by the city count ([Regions](#regions)).
+   Good: `sec_edgar  status=ok  fetched=... upserted=...`
    and exit 0. An unset `CONTACT_EMAIL` prints no summary line at all — just
    `error: sec_edgar needs a contact email in the User-Agent ...` and exit 1, before any run is
    started or recorded — and a malformed one is refused earlier still, with
    `error: invalid settings (environment or .env): ...`. A `status=error` line here means the
    fetch itself failed; see [Troubleshooting](#troubleshooting-connector-failures).
-6. **`make refresh`.** Every enabled connector, one after another. Twenty to thirty minutes on a
-   fresh database: `sec_edgar` looks back 18 months on its first run, and `company_site` visits
-   real companies' careers pages at a request every two seconds. Good: a summary line per
-   connector, all `ok` or `partial`, and exit 0.
+6. **`make refresh`.** Every enabled connector, one after another. About half an hour on a fresh
+   database once step 5 has absorbed `sec_edgar`'s backfill: `company_site` visits real
+   companies' careers pages at a request every two seconds, and `ycombinator` walks the whole
+   directory one batch at a time. Good: a summary line per connector, all `ok` or `partial`, and
+   exit 0.
 
 Then open <http://localhost:8000> for the company list and <http://localhost:8000/runs> for
 ingestion health. On `/runs`, good is: every *implemented* connector showing a recent "last ok"
@@ -77,7 +84,9 @@ normalized domain — and it never writes an ATS board token: the Greenhouse, Le
 Workable connectors discover those from each company's own careers page (SPEC §4, §10).
 
 The seed list is a bootstrap, not a target. After a `refresh --all` the `ycombinator` and
-`sec_edgar` connectors contribute far more companies than these 58.
+`sec_edgar` connectors contribute far more companies than these 58. It is also still a *Bay Area*
+list, and stays one: the other five shipped regions have no seed entries and need none, because
+they arrive entirely through the connectors ([Regions](#regions)).
 
 ## Refreshing data
 
@@ -117,9 +126,10 @@ on-demand "fetch it now" path.
    `status=error  fetch_run=not-recorded ...`, a note goes to stderr, and nothing appears in
    `fetch_runs` — do not look for a row for that line.
 
-Cadences and rate limits live in `config/connectors.yaml`, the city list in `config/regions.yaml`,
-and every keyword that classifies a role — `role_family`, `employment_type`, `seniority`,
-`flexible_signal` — in `config/classifiers.yaml`. All four are edited without touching Python.
+Cadences and rate limits live in `config/connectors.yaml`, the metros and their cities in
+`config/regions.yaml` ([Regions](#regions)), and every keyword that classifies a role —
+`role_family`, `employment_type`, `seniority`, `flexible_signal` — in `config/classifiers.yaml`.
+All four are edited without touching Python.
 
 **Classification never excludes.** A job title that matches no rule is stored with
 `role_family='other'` and still appears in the default views; `flexible_signal` is a badge and an
@@ -148,6 +158,172 @@ python cli.py sync-contacts             # ~5 seconds for 3,000 companies
 It reads and writes only the local database — nothing is fetched, so no `fetch_runs` row is
 written — and it touches only `constructed` contacts, never a published address. Running it twice
 is running it once: the second run reports `added=0  removed=0`.
+
+## Regions
+
+`config/regions.yaml` is the only place a metro or a city is named. That is SPEC §11's expansion
+hook and it is enforced, not merely intended: `tests/test_regions.py` reads the config, takes
+every metro and city name in it as a needle, and fails the build if one of them appears as a
+literal anywhere under `db/`, `ingest/`, `web/`, `migrations/` or the top-level scripts and build
+files — comments and docstrings included, because a docstring that explains the code by naming
+one region is exactly the drift the test exists to catch. Prose is exempt: this section, the
+other documents and `config/` and `tests/` themselves are allowed to name the shipped regions,
+and are checked by eye. Six metros ship, all enabled — Bay Area, New York, Seattle, Boston, Los
+Angeles and Austin — with 48 cities between them.
+
+```yaml
+regions:
+  - metro: Bay Area
+    state: CA               # the default state for every city in this region
+    state_name: California  # optional; how that code is written out in prose
+    country: US             # optional; US is the default
+    enabled: true           # optional; true is the default
+    cities:
+      - Palo Alto             # a bare string takes the region's state
+      - name: San Francisco   # the mapping form: a state override, an alias list, or both
+        aliases:
+          - SF                # a spelling to match on, never a value to store
+      - name: Jersey City     # a mapping overrides the state for one city
+        state: NJ
+        state_name: New Jersey
+```
+
+`state_name` is never stored. It exists so a text scanner can tell `City, <this city's state
+written out>` — a poster naming the place the config means — from `City, <somewhere else>`, which
+names a different place of the same name; `hn_hiring` reads it and nothing else does. Omitting it
+costs a mention a rank and never a record: without it a written-out qualifier simply stops
+promoting and the mention is ranked as the bare one it then looks like. On a per-city override
+`state` and `state_name` **travel together** — a city that overrides its state takes its own name
+for it or none at all, never the region's, which spells a different state — so `state_name`
+without `state` on a city fails at load, naming the field.
+
+The mapping form is there because a real metro crosses a state line: the shipped New York region
+has `state: NY` and still takes in Jersey City, Hoboken and Newark NJ and Stamford CT. `country`
+is *not* overridable per city — every hub in SPEC §1's "other US startup hubs" is in the US, and
+the day one is not is the day to add it.
+
+`enabled: false` takes a region out of ingestion and out of every city lookup while leaving its
+list in the file, which is how a metro is switched off in one line. It changes nothing already
+stored: rows keep the metro they were ingested with, because the database is the historical
+record (SPEC §2), so a disabled metro can still appear in the Region filter — honest rather than
+a bug. What the flag does change on sight is the app's own name: while exactly one region is
+enabled every page titles itself `<that metro> Startup Tracker`, and with two or more enabled it
+is plain `Startup Tracker`, because two metros have no honest shared label and inventing one would
+be a claim this file does not make. A `(city, state)` pair may appear only once in the whole file,
+disabled regions included: one city gets exactly one metro in the database
+(`uq_locations_city_state`), so a file mapping a city into two metros describes a database that
+cannot exist, and switching one of the two off does not make it exist. The loader refuses such a
+file at startup, naming the value.
+
+### Aliases
+
+A city entry may also list the other spellings sources write that same place as:
+
+```yaml
+      - name: New York
+        aliases:
+          - New York City
+          - NYC
+```
+
+A lookup answers an alias exactly as it answers the canonical name, and answers it with the entry,
+so **the canonical `name` is what gets stored, always**. An alias is a string to match on and
+never a value to write: the ingest path stores `name`, not the spelling a source handed it, so
+recognising another spelling can never fragment `locations` into two rows for one place.
+`uq_locations_city_state` keeps one row per real city and this file decides what that row is
+called. That is also why an alias is held to the same uniqueness rule the names are: after
+normalisation it may not collide with another city's name, or with another alias, in the same
+state anywhere in the file — a spelling two cities answer to is a lookup with no honest answer.
+
+Without an alias there is no near miss to fall back on. The geography filter has no "close
+enough": a record whose spelling the file does not know is dropped as out of region, so a metro's
+apparent size is decided partly by orthography. Measured against the live sources on 2026-09-08 —
+the whole Y Combinator directory, 6204 entries, and the September 2026 Hacker News "Who is
+hiring?" thread, 273 comments:
+
+- 713 YC entries give their location as `New York City, NY` and 195 as `New York, NY`. With only
+  the canonical spelling configured, the New York metro was therefore dropping 713 of the 908
+  companies that name it — 79% — on spelling alone. That was the largest single data defect in
+  the six-metro config, and closing it is why this key exists.
+- Of the 273 HN comments, 53 named a configured city and 220 were dropped for naming none. 22 of
+  those dropped comments write `NYC` as a whole word and 16 write `SF`. They were dropped for
+  their spelling and for nothing else.
+
+**Only an alias earned by evidence belongs in the file.** Three ship — `New York City` and `NYC`
+for New York, and `SF` for San Francisco — and each carries the count that earned it in a comment
+beside it, because an alias list is a claim about how sources actually write rather than a guess
+at what somebody might type. A spelling nothing was observed to use widens every lookup and every
+scan over free text for nothing. A *short* one is worse than nothing: the obvious two-letter form
+of Los Angeles was measured and rejected, because of those same 6204 YC entries 31 give their
+location as `LA, Nigeria` — Lagos State — while the metro's own companies write the name out, 189
+of them as `Los Angeles, CA`. Two letters name a substring of the world rather than one city, and
+aliasing them would file companies from another continent into a California metro under a name
+they never used. So count it in the source first; if nothing writes it that way, it is not an
+alias.
+
+**After editing the file, in this order:**
+
+```sh
+docker compose restart scheduler       # first: it is holding the old file in memory
+python cli.py sync-regions --dry-run   # says exactly which locations it would relabel
+python cli.py sync-regions             # relabels the rows already stored
+make refresh                           # ingests the cities that are new
+```
+
+The restart comes first because `load_regions_config` is cached at load: a scheduler process that
+has been up since before the edit keeps ingesting under the *old* file, and its next fire rewrites
+a `locations` row the sweep has just corrected — back to a metro the file no longer names — until
+it restarts. Only an edit that **reassigns a city already stored** can be reverted that way, which
+means a city moved between metros or a metro renamed; adding a metro, adding a city, or switching
+one off with `enabled: false` cannot, because there is no stored row whose label the two vintages
+of the file disagree about. Restarting first costs nothing in the cases where it is unnecessary,
+so it is the step to take rather than the distinction to remember.
+
+`python cli.py sync-regions` walks every row of `locations`, looks each up in the enabled config
+and rewrites `metro` (and `country`) where they differ. Like `sync-contacts` it reads and writes
+only the local database — nothing is fetched, so no `fetch_runs` row is written — and running it
+twice is running it once. A city in no enabled region is reported and left exactly as it is;
+nothing is ever deleted (SPEC §2). `--batch-size` bounds how many rows one `SELECT` reads per
+keyset page, as it does for `sync-contacts`, and not how many a transaction carries: each changed
+row is committed on its own, deliberately, so the sweep never holds write locks on several
+`locations` rows at once and cannot deadlock against a concurrent ingest run upserting the same
+cities in its own order — and an interrupted sweep keeps every row it had already relabelled. It
+rarely matters here, because `locations` holds one row per `(city, state)` — a few dozen — however
+many companies sit behind them.
+
+It deliberately does **not** re-run entity resolution. Moving a city between metros can change
+which companies SPEC §8 *would* have treated as the same one — step 2 matches names within a
+metro — and silently re-deciding that is precisely what §8 forbids.
+
+Nor does a later `refresh` re-decide it for you, which is the part worth knowing before you rely
+on it: SPEC §8's candidate step runs only for a record that is *creating* a company, and
+re-ingesting a company already stored resolves it by `external_id`, domain or name and stops
+there, so the pair this move newly put in one metro is never re-compared. It reaches
+`merge-review` only if some later record creates a third, similar row. After moving a city, look
+at the receiving metro yourself: `python cli.py stats` says whether its company count moved, and
+the UI's Region filter lists who is in it.
+
+Neither half of the order of operations substitutes for the other: skip the `refresh` and the new
+cities have no data at all; skip `sync-regions` and the companies already stored stay filed under
+their old metro until something happens to re-ingest them, which for an EDGAR-only company with
+no website may be never.
+
+Adding an **alias** is a third case, and the sweep is no help there: a company dropped as out of
+region was never stored, so there is no mislabelled row to relabel — there are no rows at all. It
+takes a `refresh` of whichever connector was dropping the spelling, and for a monthly source that
+is the next thread.
+
+**What another metro costs.** One connector scales with the city count, and only one: `sec_edgar`
+issues one EDGAR full-text search per configured city per 30-day window (SPEC §4,
+`docs/SOURCES.md`), so its query count is simply proportional to the number of cities enabled —
+one per *city*, not per spelling, so an alias costs a lookup and never a query.
+Going from the Bay Area's 18 to all 48 makes the first run's 18-month backfill roughly two and a
+half times longer, and every later incremental run proportionally longer too. Every other
+connector reads the same national index, or the same company's board, whatever the region list
+says, and filters locally — so it costs the same with one region enabled or all six. Each extra
+city also widens the surface for a false-positive name match, which is why the shipped lists are
+tight: a city earns its place by being somewhere startups actually file and post rather than by
+being inside the metro's official boundary.
 
 ## Scheduling
 
@@ -206,12 +382,16 @@ and shows up on `/runs`; see [Operations](#operations) below.
 
 ## Operations
 
-Two read-mostly commands for looking after a live database. Neither fetches anything.
+Two read-mostly commands for looking after a live database. Neither fetches anything. The other
+two local-only commands, `sync-contacts` and `sync-regions`, are written up beside the thing they
+reconcile — [contacts](#upgrading-a-database-that-predates-the-contacts-phase) and
+[regions](#regions).
 
 ### `python cli.py stats`
 
-The state of the database in one screen: row counts, the last successful run of every
-*configured* connector, and the last seven days' intake (SPEC §12).
+The state of the database in one screen: row counts, how the companies fall across the metros,
+the last successful run of every *configured* connector, and the last seven days' intake
+(SPEC §12).
 
 ```
 $ docker compose run --rm app python cli.py stats
@@ -223,11 +403,18 @@ rows
   investors             0
   people              143
   contacts            229 published, 515 constructed
-  locations            18
+  locations            46
   sectors             399
   merge candidates      3 unresolved, 0 resolved
   fetch runs           12
   notes / bookmarks     1 / 1
+companies per metro  (an office in two metros counts in both)
+  Bay Area     2087
+  New York      402
+  Boston        231
+  Seattle       188
+  Los Angeles   141
+  Austin         76
 last successful run
   sec_edgar       2026-09-04 09:55 UTC  (1d ago)
   ycombinator     2026-09-04 09:55 UTC  (1d ago)
@@ -247,6 +434,12 @@ last 7 days
   site; `constructed` is a LinkedIn link built from the domain. The UI keeps them apart and so
   does this.
 - `merge candidates` is the queue `merge-review` works through (below).
+- **`companies per metro` is the operational answer to "did the new region actually ingest
+  anything?"**, biggest first. It counts a company once per metro it has a location in, so a
+  company with offices in two of them is counted in both and the section does not sum to
+  `companies`; a company with no location at all appears in no line. The metros come from the
+  `locations` rows, not from `config/regions.yaml`, so a region you disabled but already ingested
+  keeps its line — which is the point, since the rows are still there ([Regions](#regions)).
 - **The last-successful-run list is driven by the config, not by the runs table** — the same list
   `/runs` shows — so a connector that has *never* succeeded appears, reading `never`. That is the
   case worth seeing.
@@ -385,6 +578,10 @@ Four pages, server-rendered Jinja2 with HTMX for the interactive parts, on
 
 - **`/` — the company list.** One collapsed row per company: name, HQ city, sector chips, latest
   round with amount and date, open role count, and a breakdown of which role families are open.
+  Filter by Region or City and a company headquartered elsewhere can still match on a second
+  office — it really does have one there — so the row adds `Seattle office` beside the HQ to say
+  which one answered. The marker appears only when the row is not already naming that city, so
+  an unfiltered list never shows it.
   Expanding a row lazy-loads the rest over HTMX — the thesis, every location, the funding history
   with investors, the full open-roles table, contacts (what the company published on its own site,
   kept visibly separate from the LinkedIn search shortcuts the pipeline constructs — SPEC §6), a
@@ -423,7 +620,8 @@ form still works with JavaScript off. All filters combine into a single paramete
 | Parameter | Repeats | Effect |
 |---|---|---|
 | `q` | | Full-text search over the company `tsvector`, plus a `pg_trgm` similarity arm on the name so a typo still finds it. On `/roles` the job text gets the full-text search and the company name keeps the typo tolerance. |
-| `city` | yes | HQ or office city. |
+| `metro` | yes | Metro region, labelled **Region** in the form and first in the row. A company matches when any of its locations carries that metro. Named for the column it filters (`locations.metro`); the values offered are the metros actually in the database, so a region you have disabled but already ingested is still there to filter by. |
+| `city` | yes | HQ or office city. The form groups the options by region, because dozens of cities in one flat list is not a control anyone can use; the value on the wire stays the bare city name, so an old bookmark keeps working and a city name shared by two states matches both. Where the facet holds such a shared name, that option's label carries its state so you can tell the two apart on screen. |
 | `sector` | yes | Sector slug. |
 | `stage` | yes | Company stage. |
 | `round` | yes | Type of the *latest* round. |
@@ -442,6 +640,12 @@ form still works with JavaScript off. All filters combine into a single paramete
 The four role-level filters constrain the *same* role, not four different ones: a company matching
 `family=software&employment=part_time` has a part-time software role, not a full-time software
 role and a separate part-time marketing one.
+
+`metro` and `city` are two independent geography filters, ANDed like everything else rather than
+one narrowing the other: picking a region does not repopulate the city list, and
+`?metro=X&city=Y` asks for companies that have a location in region X *and* a location in city Y.
+Neither is a mode, a scope or a setting — there is nothing to switch back afterwards, and the URL
+carries the whole state of the view.
 
 Filtering never hides a role from you once you are looking at a company. The open-roles table
 inside an expanded row lists **every** open role that company has, with the ones matching your

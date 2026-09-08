@@ -95,11 +95,16 @@ async def company_list(
 
     Four statements on a fragment render, and none of them per row: the page itself, then the
     three grouped statements :func:`db.queries.company_card_extras` runs for the ≤50 ids it
-    returned. A full page adds the two small facet lookups behind :func:`web.deps.facets`,
+    returned. A full page adds the three small facet lookups behind :func:`web.deps.facets`,
     which is called below rather than declared above precisely so a swap does not pay for a
     filter form it does not render. An htmx request gets ``_company_results.html`` — the same
     partial the "load more" button swaps in, which is why the button can replace itself with
     the next rows *plus* the next button.
+
+    Nothing here enumerates the filters: :class:`web.filters.CompanyListRequestDep` resolves
+    the whole set and this handler passes it along whole, which is why SPEC §12 Phase 7's
+    ``metro`` needed no change on this side and why ``/roles`` cannot end up with a different
+    filter row (SPEC §9's "same filter set").
     """
     page = await queries.company_list_page(
         session, filters=listing.filters, sort=listing.sort, cursor=listing.cursor

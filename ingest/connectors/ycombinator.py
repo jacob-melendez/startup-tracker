@@ -2,7 +2,7 @@
 
 YC publishes a public company index that its own directory page searches through Algolia. It
 yields exactly what SPEC §4 promises — one-liner, batch, sector tags, website, team size — plus
-``all_locations``, ``stage`` and ``status``, with a heavy Bay Area concentration.
+``all_locations``, ``stage`` and ``status``, heavily concentrated in a handful of metros.
 
 How a run works
 ---------------
@@ -13,9 +13,9 @@ How a run works
    ``/companies?*``, the faceted query strings, is disallowed) — the shared client checks it.
 2. One query reads the ``batch`` facet, then :meth:`fetch` issues **one query per batch**. The
    index caps ``page``-based pagination at :data:`PAGINATION_LIMIT` hits, so a broad query such
-   as "San Francisco" (3 141 hits when the fixtures were recorded) can never be walked; the
-   largest single batch is a few hundred companies, so a per-batch query always can. Fifty-odd
-   requests a week is the whole cost.
+   as the name of a large configured city (3 141 hits for the largest when the fixtures were
+   recorded) can never be walked; the largest single batch is a few hundred companies, so a
+   per-batch query always can. Fifty-odd requests a week is the whole cost.
 3. Every hit whose ``all_locations`` resolves to a city in ``config/regions.yaml`` becomes a
    :class:`~ingest.base.CompanyRecord`; the rest are counted and dropped.
 
@@ -58,8 +58,9 @@ _CREDENTIALS = re.compile(
     r'"(?:app|appId|applicationId)"\s*:\s*"(?P<app_id>[A-Z0-9]{6,32})"\s*,\s*'
     r'"(?:key|apiKey|searchApiKey)"\s*:\s*"(?P<key>[A-Za-z0-9+/=]{20,})"'
 )
-#: ``all_locations`` is a comma-separated trail: ``"San Francisco, CA, USA"``, sometimes several
-#: offices joined by ``";"``.
+#: ``all_locations`` is a comma-separated trail: ``"<City>, ST, USA"``, sometimes several
+#: offices joined by ``";"``. No metro or city is named here on purpose (SPEC §12 Phase 7):
+#: ``config/regions.yaml`` decides which of them this connector keeps.
 _LOCATION_SPLIT = re.compile(r"\s*;\s*")
 
 #: YC's ``status`` values mapped onto ``Company.status`` / ``Company.stage`` (SPEC §5).
@@ -118,7 +119,7 @@ def parse_credentials(markup: str) -> YCCredentials | None:
 
 
 def split_locations(value: object) -> list[tuple[str, str]]:
-    """``"San Francisco, CA, USA"`` → ``[("San Francisco", "CA")]``.
+    """``"<City>, ST, USA"`` → ``[("<City>", "ST")]``.
 
     Only the ``city, state`` prefix matters; the country tail and any extra components are
     dropped. Entries that are not a ``city, state`` pair (``"Remote"``) yield nothing.

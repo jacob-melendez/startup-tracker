@@ -11,8 +11,13 @@
 # Rules for editing:
 #   * fields: name, domain, city, and an optional `sector` override (the group key is the default
 #     sector hint). `state` defaults to the state of the region that `config/regions.yaml` gives
-#     the city; a city no region knows is an error, so the file can never smuggle in a company
-#     outside the configured metros.
+#     the city; a city no *enabled* region knows — or a bare name two enabled regions both claim
+#     — is skipped rather than an error: the entry is dropped, counted under `outside_region` and
+#     logged at warning (`seed.skip`, with the total on `seed.summary`), and the run still ends
+#     `ok`. So the file can never smuggle in a company outside the configured metros, but a typo
+#     here fails quietly — the printed summary line and the /runs row show nothing, so after
+#     seeding check the log's `skipped=` count against the number of entries you expect. The cure
+#     for an ambiguous bare name is a `state:` on the entry.
 #   * NEVER hardcode an ATS token here — the discovery step in the Greenhouse/Lever/Ashby/
 #     Workable connectors finds it (SPEC §4, §10, CLAUDE.md).
 #   * `seed` is the lowest-priority connector (SPEC §8), so anything written here is overwritten
