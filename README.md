@@ -9,18 +9,19 @@ Postgres 16 database; a server-rendered UI browses it. `docs/SPEC.md` is the sou
 
 ## Setup and first run
 
-From a clean checkout to a database worth looking at is six commands and about an hour, most of
-it spent being polite to other people's servers. Each step says what "good" looks like, so you
-can tell a slow step from a broken one. The two long steps are long in proportion to how many
-regions `config/regions.yaml` has enabled; the times below are for the six that ship.
+From a clean checkout to a database worth looking at is six commands and about an hour and a
+half, most of it spent being polite to other people's servers. Each step says what "good" looks
+like, so you can tell a slow step from a broken one. The two long steps are long in proportion to
+how many regions `config/regions.yaml` has enabled; the times below were measured on the six that
+ship, and step 5 is most of the hour and a half all on its own.
 
 ```sh
 cp .env.example .env      # 1. then set CONTACT_EMAIL — see below
 make up                   # 2. Postgres 16 + the web app + the scheduler (~1 min first time)
 make migrate              # 3. alembic upgrade head (~2 s)
-make seed                 # 4. the Bay Area bootstrap list (SPEC §10) (~2 min)
-make refresh CONNECTOR=sec_edgar   # 5. one connector, to prove the plumbing (~10 min first run)
-make refresh                       # 6. --all: every enabled connector (~30 min)
+make seed                 # 4. the Bay Area bootstrap list (SPEC §10) (~5 min)
+make refresh CONNECTOR=sec_edgar   # 5. one connector, to prove the plumbing (~65 min first run)
+make refresh                       # 6. --all: every enabled connector (~20 min after step 5)
 ```
 
 1. **`cp .env.example .env`, then set `CONTACT_EMAIL`.** SEC EDGAR's fair-access policy requires
@@ -39,8 +40,9 @@ make refresh                       # 6. --all: every enabled connector (~30 min)
    the command exits 0. Alembic owns every table, index and enum in this project (SPEC §3).
 4. **`make seed`.** Loads `config/seed_companies.yaml` and resolves each domain over the network
    at one request per host per two seconds. Good: a summary line like
-   `seed  status=ok  fetched=58  upserted=58  duration=118.4s`. A handful of `status='dead'`
-   rows in the log is normal — see [Seeding](#seeding).
+   `seed  status=partial  fetched=58  upserted=58  duration=299.4s`. A handful of `status='dead'`
+   rows in the log is normal, and one of them is what makes that line `partial` rather than `ok`
+   — see [Seeding](#seeding).
 5. **`make refresh CONNECTOR=sec_edgar`.** One connector, so a configuration problem surfaces
    before you wait out a full sweep — and on a fresh database this is the single longest
    connector run there is: the first `sec_edgar` run backfills 18 months and searches every
@@ -50,9 +52,14 @@ make refresh                       # 6. --all: every enabled connector (~30 min)
    `error: sec_edgar needs a contact email in the User-Agent ...` and exit 1, before any run is
    started or recorded — and a malformed one is refused earlier still, with
    `error: invalid settings (environment or .env): ...`. A `status=error` line here means the
-   fetch itself failed; see [Troubleshooting](#troubleshooting-connector-failures).
-6. **`make refresh`.** Every enabled connector, one after another. About half an hour on a fresh
-   database once step 5 has absorbed `sec_edgar`'s backfill: `company_site` visits real
+   fetch itself failed; see [Troubleshooting](#troubleshooting-connector-failures). A 5xx from
+   EDGAR is the common one and is usually a blip on their side that outlasted the client's five
+   retries: **just run the step again.** Nothing is lost and nothing is duplicated — the
+   companies already upserted stay, and because an `error` run does not advance the incremental
+   anchor (only `ok` and `partial` do), the retry rescans the same window rather than skipping
+   past the filings it never reached.
+6. **`make refresh`.** Every enabled connector, one after another. About twenty minutes on a
+   fresh database once step 5 has absorbed `sec_edgar`'s backfill: `company_site` visits real
    companies' careers pages at a request every two seconds, and `ycombinator` walks the whole
    directory one batch at a time. Good: a summary line per connector, all `ok` or `partial`, and
    exit 0. With `CONTACT_EMAIL` still unset this prints a `warning: skipping sec_edgar …` and
