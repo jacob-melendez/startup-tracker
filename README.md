@@ -16,7 +16,7 @@ how many regions `config/regions.yaml` has enabled; the times below were measure
 ship, and step 5 is most of the hour and a half all on its own.
 
 ```sh
-cp .env.example .env      # 1. then set CONTACT_EMAIL — see below
+cp -n .env.example .env   # 1. then set CONTACT_EMAIL — see below (-n: never clobber)
 make up                   # 2. Postgres 16 + the web app + the scheduler (~1 min first time)
 make migrate              # 3. alembic upgrade head (~2 s)
 make seed                 # 4. the Bay Area bootstrap list (SPEC §10) (~5 min)
@@ -24,7 +24,11 @@ make refresh CONNECTOR=sec_edgar   # 5. one connector, to prove the plumbing (~6
 make refresh                       # 6. --all: every enabled connector (~20 min after step 5)
 ```
 
-1. **`cp .env.example .env`, then set `CONTACT_EMAIL`.** SEC EDGAR's fair-access policy requires
+1. **`cp -n .env.example .env`, then set `CONTACT_EMAIL`.** The `-n` matters on any run but
+   the first: a plain `cp` silently overwrites a `.env` you have already configured, and the
+   symptoms are indirect — `sec_edgar` starts refusing to run because `CONTACT_EMAIL` is
+   empty again, and `pytest` tries to start a testcontainers Postgres because
+   `TEST_DATABASE_URL` is commented out again. SEC EDGAR's fair-access policy requires
    a real contact address in the User-Agent (SPEC §4); the client sends
    `startup-tracker/0.1 you@example.com`, and `sec_edgar` refuses to run without one rather than
    getting the whole project blocked. The address must have a real domain — `dev@localhost` is
@@ -77,7 +81,8 @@ implementation yet, so nothing can ever record a successful run for it and it is
 ever be Stale. All three are the design, not a fault.
 
 From here on the scheduler keeps it current on its own; you never need to run `refresh` again
-unless you want data *now*.
+unless you want data *now* — as long as the machine running it is awake at the hours SPEC §7.2
+names, which a laptop is not ([Keeping it running](#keeping-it-running-launchd)).
 
 ### Running without Docker
 
@@ -89,18 +94,25 @@ processes, and it runs natively.
 ```sh
 brew install postgresql@16 uv          # 1. the two things Compose was providing
 brew services start postgresql@16      # 2. starts now and again at login
-psql -d postgres -c "CREATE ROLE tracker WITH LOGIN SUPERUSER PASSWORD 'tracker'"
+psql -d postgres -c "CREATE ROLE tracker WITH LOGIN CREATEDB PASSWORD 'tracker'"
 psql -d postgres -c "CREATE DATABASE tracker OWNER tracker"
-cp .env.example .env                   # 3. the URLs in it already point at localhost:5432
+cp -n .env.example .env                # 3. the URLs in it already point at localhost:5432
 uv sync                                # 4. the locked dependency set
 uv run python cli.py migrate           # 5. then seed, refresh, ... as below
 ```
 
-`SUPERUSER` is not laziness: the first migration runs `CREATE EXTENSION pg_trgm` (SPEC §5, §8),
-`pg_trgm` is not a *trusted* extension, and so only a superuser may create it. It is what
-`POSTGRES_USER` already is inside the `postgres:16` image, so this matches Compose rather than
-departing from it. Homebrew's cluster is UTF-8, which matters — a `SQL_ASCII` one rejects the
-`\uXXXX` escapes that turn up in scraped JSONB payloads.
+`CREATEDB` is not laziness: `tests/conftest.py` creates the `tracker_test` database itself on the
+first `make test` once you point `TEST_DATABASE_URL` at this server (below), and it connects as
+this role to do it. `SUPERUSER` is *not* needed — the first migration's `CREATE EXTENSION pg_trgm`
+(SPEC §5, §8) works as the database owner, because `pg_trgm` has been a *trusted* extension since
+PostgreSQL 13 (`SELECT trusted FROM pg_available_extension_versions WHERE name='pg_trgm'` says so
+on this cluster). `POSTGRES_USER` inside the `postgres:16` image *is* a superuser, so granting it
+here would match Compose, but nothing in the schema asks for it and a superuser on your own
+machine can read and write every other database on the cluster. If you already created the role
+the old way: `ALTER ROLE tracker NOSUPERUSER CREATEDB` — the `tracker` database is owned by
+`tracker`, so it keeps every privilege the app and the migrations actually use. Homebrew's cluster
+is UTF-8, which matters — a `SQL_ASCII` one rejects the `\uXXXX` escapes that turn up in scraped
+JSONB payloads.
 
 Homebrew keeps `postgresql@16` keg-only, so `psql` is at
 `/opt/homebrew/opt/postgresql@16/bin/psql` until you put that directory on your `PATH`.
@@ -110,7 +122,7 @@ Then, instead of the `make` targets:
 | Compose | Native |
 |---|---|
 | `make up` | `brew services start postgresql@16`, plus the two processes below |
-| `make down` | `brew services stop postgresql@16` |
+| `make down` | `brew services stop postgresql@16` — but that stops only the database; if the two processes below are running as agents, take them down first ([Keeping it running](#keeping-it-running-launchd)), or the web app stays up and 500s at every request |
 | `make migrate` | `uv run python cli.py migrate` |
 | `make seed` | `uv run python cli.py seed` |
 | `make refresh` | `uv run python cli.py refresh --all` |
@@ -118,14 +130,158 @@ Then, instead of the `make` targets:
 | the `app` service | `uv run uvicorn web.app:app --port 8000` (add `--reload` while editing) |
 | the `scheduler` service | `uv run python scheduler.py` |
 | `docker compose run --rm app python cli.py stats` | `uv run python cli.py stats` |
+| `docker compose logs -f <svc>` | `tail -f ~/Library/Logs/startup-tracker/{web,scheduler}.log` |
+| `docker compose ps <svc>` | `launchctl list \| grep startup-tracker` (`brew services list` for `db`) |
+| `docker compose restart <svc>` | `launchctl kickstart -k gui/$(id -u)/local.startup-tracker.{web,scheduler}` |
+
+The last three rows assume the agents of [Keeping it running](#keeping-it-running-launchd); running
+the two processes by hand in a terminal, they are that terminal's scrollback and Ctrl-C. The rest
+of this README still writes `docker compose logs/ps/restart <svc>` in places — read them as the
+right-hand column here.
 
 `make test` and `make lint` need no translation — they run on the host and only ever needed
 `uv`. Set `TEST_DATABASE_URL` in `.env` (see `.env.example`) so `pytest` uses this server
 instead of starting a testcontainers Postgres, which would want Docker again.
 
 The two long-running processes are the trade you are making: Compose supervises `app` and
-`scheduler` for you and restarts them, whereas natively they are yours to keep alive — run each
-in its own terminal, or wrap them in `launchd` if you want them back after a reboot.
+`scheduler` for you and restarts them, whereas natively they are yours to keep alive. Run each in
+its own terminal while you are working, or hand them to `launchd`, below, to get back what
+Compose was doing.
+
+### Keeping it running: launchd
+
+Two user agents in `~/Library/LaunchAgents/`, one per process. They start at login, restart on
+crash, and log to `~/Library/Logs/startup-tracker/`. Postgres is already an agent of the same
+kind — `brew services` writes `sh.brew.postgresql@16.plist` — so this is the same mechanism, not
+a new one.
+
+| | |
+|---|---|
+| `local.startup-tracker.web` | `uvicorn web.app:app --host 127.0.0.1 --port 8000` |
+| `local.startup-tracker.scheduler` | `python scheduler.py` |
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.startup-tracker.web.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.startup-tracker.scheduler.plist
+launchctl list | grep startup-tracker      # PID, last exit status, label
+```
+
+Four things in those files are load-bearing rather than boilerplate:
+
+- **`WorkingDirectory` is the repo.** Both commands resolve against it: `uvicorn` imports
+  `web.app` off the working directory (`[tool.uv] package = false`, so nothing is installed into
+  the venv) and `python scheduler.py` opens the script there, so pointed anywhere else the
+  process dies on import before it serves or schedules anything. It is also where
+  `pydantic-settings` finds `.env`, which supplies `CONTACT_EMAIL` and `LOG_JSON` — `DATABASE_URL`
+  is the exception, since `settings.py` defaults it to the same URL `.env` sets. And it is why no
+  secret belongs in the plist, which is world-readable.
+- **The command is `.venv/bin/uvicorn` and `.venv/bin/python`, not `uv run`.** Nothing has to be
+  on `PATH` at login and no dependency resolution happens on each start. `uv sync` keeps it
+  current; after changing dependencies, restart the agents.
+- **`ExitTimeOut` is 300 on the scheduler**, against a launchd default of five seconds
+  (`man launchd.plist` says only "system-defined"; `launchctl print` on an agent without the key
+  reports `exit timeout = 5`, which also makes the web agent's 30 a six-fold extension rather
+  than a nudge). `launchctl bootout` sends `SIGTERM` and then `SIGKILL` once it expires, and
+  `scheduler.py` answers `SIGTERM` by pausing the schedule and *draining* the run in flight —
+  because cancelling a run kills `run_connector`'s `finally` and leaves its `fetch_runs` row
+  stuck at `status='error'` with a NULL `finished_at`, which `/runs` then shows as running for
+  ever. Five seconds does not begin to drain a real connector run. It is not set to `0` either:
+  launchd reads `0` as an immediate `SIGKILL` — measured here, the process never reaches its
+  handler — which is the no-drain case the setting exists to prevent. So stopping the scheduler
+  during a long `sec_edgar` backfill is still killed at five minutes and leaves one such row —
+  cosmetic, and [Troubleshooting](#troubleshooting-connector-failures) says how to clear it.
+- **`--host 127.0.0.1`.** SPEC §1 makes public deployment a non-goal; the Compose file publishes
+  `8000` on all interfaces, and this is the one place that rule is actually enforced.
+
+`PYTHONUNBUFFERED=1` is there for a duller reason: Python block-buffers stdout when it is a file
+rather than a terminal, so without it the log stays empty for minutes and reads exactly like a
+hung process.
+
+Two things outside those files matter more than anything in them:
+
+**They only run while the Mac is awake, and the cron cadences all fall while a laptop is asleep.**
+APScheduler's timers run on the monotonic clock, which on macOS stops during system sleep — a
+timer armed for 24 hours expires after 24 *awake* hours, so a fire does not arrive at its
+wall-clock time. Every cadence in `config/connectors.yaml` is UTC, and UTC-4 puts all of them
+between 23:00 and 05:00 local, which is exactly when an idle machine is asleep (`pmset -g custom`
+shows the idle sleep timer; it is one minute here, on battery *and* on mains). A fire that comes
+due late is then dropped rather than run late, by `MISFIRE_GRACE_SECONDS` in `scheduler.py` — an
+hour as it stands — with a `Run time of job ... was missed by` WARNING as the only trace: no
+`fetch_runs` row, nothing on `/runs`. So while that constant stands, a laptop that sleeps
+overnight gets the web app kept up and the data not kept fresh: `uv run python cli.py refresh
+--all` is what actually brings anything in.
+For the cadences to fire at their hour the machine has to be awake then: `caffeinate -s` across
+the night, or mains power with the lid open (on AC this Mac's `displaysleep` is `0`, and a display
+that stays on holds system sleep off). A scheduled wake — `sudo pmset repeat wakeorpoweron` — is
+not enough by itself: waking the machine does not make a timer that froze during the sleep expire.
+
+**The repo lives under `~/Desktop`, which macOS gates.** A launchd agent inherits no such access,
+so the first start of each agent raises a Files-and-Folders consent request against the
+interpreter the venv points at (`/Library/Frameworks/Python.framework/...`, which appears as
+"Python"). Until it is answered the agent shows a PID and `state = running` while making no
+progress. Revoking it later in Privacy & Security, or rebuilding `.venv` onto an interpreter with
+no grant, puts it back in that state; a checkout outside `~/Desktop`, `~/Documents` and
+`~/Downloads` avoids the question entirely.
+
+Everyday operation:
+
+```sh
+launchctl kickstart -k gui/$(id -u)/local.startup-tracker.web        # restart (after a code change)
+launchctl print gui/$(id -u)/local.startup-tracker.scheduler         # full state, incl. last exit
+tail -f ~/Library/Logs/startup-tracker/scheduler.log                 # follow one
+launchctl bootout gui/$(id -u)/local.startup-tracker.web             # stop for this login session
+```
+
+`bootout` stops the agent *and* unregisters it from the *running* `gui/$UID` domain — that is the
+difference from `kickstart -k`, which restarts in place. Two things about it catch people out:
+
+- **It is not persistent.** That domain is torn down at logout and rebuilt at the next login, and
+  building it implicitly bootstraps everything in `~/Library/LaunchAgents` — where both plists
+  live, both with `RunAtLoad`. So a booted-out agent is running again after a reboot or a log out
+  and in. `launchctl disable` is the only switch that is recorded across logins
+  (`launchctl print-disabled gui/$(id -u)` lists what is); it is not an off switch on its own,
+  because it blocks future loads and leaves a running agent running. Stopping something for good
+  takes both verbs, and `launchctl enable` before `bootstrap` to undo — a bootstrap of a disabled
+  label is refused.
+- **It does not wait.** It returns as soon as launchd has sent `SIGTERM`, while the process goes
+  on draining in the background for up to its `ExitTimeOut`. Until that drain ends the label
+  stays registered in `state = SIGTERMed` and re-`bootstrap` fails with `Bootstrap failed: 5:
+  Input/output error`.
+
+To take everything down, including the database:
+
+```sh
+launchctl bootout gui/$(id -u)/local.startup-tracker.scheduler   # returns at once; it may be mid-run
+launchctl disable gui/$(id -u)/local.startup-tracker.scheduler   # ...and stay down across logins
+while launchctl print gui/$(id -u)/local.startup-tracker.scheduler >/dev/null 2>&1; do sleep 2; done
+launchctl bootout gui/$(id -u)/local.startup-tracker.web
+launchctl disable gui/$(id -u)/local.startup-tracker.web
+brew services stop postgresql@16
+```
+
+The wait is what makes the ordering mean anything, since `bootout` gave none. `brew services stop`
+sends Postgres a *smart* shutdown, which keeps the draining run's existing connection alive and so
+normally lets it finalize its `fetch_runs` row — but `sh.brew.postgresql@16.plist` sets the
+postmaster's own `ExitTimeOut` to 120, and a drain still going after that loses the database
+underneath it and orphans the row (Troubleshooting, below). `launchctl print` failing is the
+signal the label has finally unregistered, which happens when the process exits. To bring it all
+back: `launchctl enable` each label, then `bootstrap` as above. Postgres needs no `enable` —
+`brew services stop` deletes its generated plist outright, which is why it, alone, stays down
+across a login without one.
+
+Nothing trims the two logs. launchd does not rotate them and no `newsyslog` entry names them, so
+they are as long as the process's whole history. Ordinary browsing adds a line per request, but a
+failing agent is the case to watch: `ThrottleInterval` respawns it every 30 seconds and every
+attempt appends, so something else already holding port `8000` costs about 1.2 MB a day, and every
+page request with Postgres stopped writes a 12 KB traceback. Clear one by truncating it in place —
+`: > ~/Library/Logs/startup-tracker/web.log` — and not with `mv` or `rm`: launchd opens these
+`O_APPEND` and holds the descriptor for the life of the process, so a renamed or deleted log goes
+on being written to an inode you can no longer see until the next respawn. That is also why a
+`newsyslog` entry would not work here — it rotates by rename.
+
+Nothing here is in the repository. The plists carry absolute paths to one checkout on one
+machine, and SPEC §11 fixes the repository tree, so they live in `~/Library/LaunchAgents/` where
+macOS expects them and this section is the reproducible record of what they contain.
 
 ## Seeding
 
@@ -323,6 +479,7 @@ alias.
 
 ```sh
 docker compose restart scheduler       # first: it is holding the old file in memory
+                                       # natively: launchctl kickstart -k gui/$(id -u)/local.startup-tracker.scheduler
 python cli.py sync-regions --dry-run   # says exactly which locations it would relabel
 python cli.py sync-regions             # relabels the rows already stored
 make refresh                           # ingests the cities that are new
@@ -423,7 +580,9 @@ Things worth knowing before you edit a cadence:
 - **Nothing runs at startup.** The first fetch of any connector is at its next cron fire. Use
   `make refresh` when you want data now — a restart is not a refresh.
 - **An edit needs a restart.** The YAML is read once, at startup:
-  `docker compose restart scheduler`.
+  `docker compose restart scheduler`, or natively
+  `launchctl kickstart -k gui/$(id -u)/local.startup-tracker.scheduler` — which sends `SIGTERM`
+  and honours `ExitTimeOut`, so it drains a run in flight exactly as `bootout` does.
 - **`enabled: false` and `cadence: null` are how you switch something off**, and the startup log
   says which of the four reasons applies to every connector that got no job: no implementation
   yet, not in the registry (that is `seed`, which is run by hand as `cli.py seed`), disabled, or
@@ -434,6 +593,9 @@ docker compose logs -f scheduler          # follow it
 docker compose logs scheduler | grep 'schedule loaded'   # what it picked up, with next fire times
 docker compose restart scheduler          # after editing config/connectors.yaml
 ```
+
+Natively, that is `tail -f ~/Library/Logs/startup-tracker/scheduler.log`, a `grep` of the same
+file, and `launchctl kickstart -k gui/$(id -u)/local.startup-tracker.scheduler`.
 
 A run that fails three times in a row logs at ERROR (`connector failing  connector=... consecutive=3`)
 and shows up on `/runs`; see [Operations](#operations) below.
@@ -616,10 +778,14 @@ refreshing its last *successful* run, so it reads "last ok 9d ago, 0 consecutive
 | Symptom | Cause | Fix |
 |---|---|---|
 | `error: sec_edgar needs a contact email in the User-Agent ...` with no summary line (CLI), or a `sec_edgar` run on `/runs` whose `error_text` starts `fetch: RuntimeError: sec_edgar needs a contact email ...` (scheduler) | `CONTACT_EMAIL` is unset. The connector refuses to run rather than earn the project a `403 Undeclared Automated Tool` from SEC's WAF, which is what a User-Agent with no contact address gets (SPEC §4). | Set `CONTACT_EMAIL=you@example.com` in `.env` and restart. The accepted shape is `startup-tracker/0.1 you@example.com`; `dev@localhost` never reaches the guard — the settings validator refuses it at startup. That validator only insists on a dotted domain, so a plausible-looking fake (`a@b.invalid`) is the one way a real `403` still reaches you. |
-| `status=error  fetch_run=not-recorded` | The `fetch_runs` row itself could not be written — the database is unreachable. | Check `DATABASE_URL` and `docker compose ps db`. This is the one case where a failure leaves *no* row; do not go looking for one. |
+| `status=error  fetch_run=not-recorded` | The `fetch_runs` row itself could not be written — the database is unreachable. | Check `DATABASE_URL` and `docker compose ps db` (natively, `brew services list`). This is the one case where a failure leaves *no* row; do not go looking for one. |
+| A run shows on `/runs` as still going long after the process stopped: `status='error'`, `finished_at` NULL | The process was killed rather than asked to stop, so `run_connector`'s `finally` never finalized the row. Under launchd this is what `ExitTimeOut` expiring mid-drain looks like — see [Keeping it running](#keeping-it-running-launchd) — and a `kill -9` does it too. So does stopping Postgres under a drain that is still going: `bootout` does not wait, and Homebrew's postmaster is `SIGKILL`ed 120 s after its own, which is why the take-down block waits for the scheduler before it stops the database. | Cosmetic, and safe to leave: an unfinished run counts as neither a success nor a failure, so it neither advances the incremental window nor feeds the failure streak, and the next run rescans. To clear it: `UPDATE fetch_runs SET status='error', finished_at=now(), error_text='killed' WHERE finished_at IS NULL AND connector='<name>'` — but only once you are sure nothing is still running, since an in-flight run looks identical. |
 | A run ends `partial` | The scan completed but some records failed. `error_text` on `/runs` holds the first problems (capped at 4,000 characters). | Usually harmless — one malformed posting, one unreachable careers page. Read `error_text`; the run still counts as completed and still advances the incremental window. |
-| `/runs` shows a connector **Stale** but nothing is failing | Nothing is running it: `enabled: false`, no implementation (`product_hunt`), or the scheduler is down. A `cadence: null` connector is *not* a cause — with no schedule to miss, it is never Stale. | `docker compose logs scheduler \| grep 'not scheduled'` names the reason for every connector that got no job. |
-| The scheduler scheduled nothing at all | Every connector was skipped, or the service is not running. | `docker compose ps scheduler`, then the `schedule loaded` log line, which lists what it did pick up. |
+| `/runs` shows a connector **Stale** but nothing is failing | Nothing is running it: `enabled: false`, no implementation (`product_hunt`), or the scheduler is down. On a Mac, also: the machine was asleep when the cadence came due, so the fire was missed and dropped ([Keeping it running](#keeping-it-running-launchd)). A `cadence: null` connector is *not* a cause — with no schedule to miss, it is never Stale. | `docker compose logs scheduler \| grep 'not scheduled'` names the reason for every connector that got no job; natively, `grep 'not scheduled' ~/Library/Logs/startup-tracker/scheduler.log`. Then `grep 'was missed by'` the same file for fires that came due while the Mac slept. |
+| The scheduler scheduled nothing at all | Every connector was skipped, or the service is not running. | `docker compose ps scheduler` (natively `launchctl list \| grep startup-tracker`), then the `schedule loaded` log line, which lists what it did pick up. |
+| `launchctl list \| grep startup-tracker` shows `-` for the PID and `78` for the status, and the log has stopped growing | launchd could not spawn the process at all — `78` is `EX_CONFIG`. The `WorkingDirectory` or the program path in the plist no longer exists: repo moved or renamed, `.venv` deleted, Python 3.12 uninstalled. Nothing ever ran, so nothing was logged; a log file that never existed is not even created. | `launchctl print gui/$(id -u)/local.startup-tracker.web` confirms it (`last exit code = 78: EX_CONFIG`). Fix the absolute paths in the plist, then `bootout` and `bootstrap` it. Restoring the missing file is not enough on its own: a missing *program* is retried zero times (`runs` stays at 1), while a missing *directory* is retried every 30 s for ever without ever saying why. |
+| The log fills with `ModuleNotFoundError: No module named 'web'` (or `can't open file 'scheduler.py'`) every 30 s | `WorkingDirectory` points at a real directory that is not the repo, or is missing from the plist. Nothing is installed into the venv, so the import only resolves from the checkout. | Set it to the checkout and reload the agent. |
+| An agent has a PID and `state = running` but never serves and never schedules, and its log is empty or ends in `PermissionError: [Errno 13] ... '.env'` | macOS has not granted that interpreter access to the folder the repo is in — `~/Desktop` here ([Keeping it running](#keeping-it-running-launchd)). | Answer the consent dialog, or re-tick the interpreter under Privacy & Security → Files and Folders, then `launchctl kickstart -k` the agent. |
 | `ycombinator` fails with `403` from Algolia | YC's public search key **rotates**; the connector re-reads it from the directory page on every run, so a 403 usually means the page layout changed. | Check `docs/SOURCES.md` § `ycombinator`. `options.app_id`/`api_key` in `config/connectors.yaml` are the emergency override. |
 | A Workable account returns nothing | Workable's widget answers `200` with an empty `jobs` list for account names that were never real. | Not a failure. The connector treats an empty board with no description as "nothing here" and moves on. |
 | `company_site` discovers no ATS token for a company | Some careers pages render their board in JavaScript, so there is no link to find. | Not a failure, and not fixable from here — this project does not run a browser (SPEC §4). |
