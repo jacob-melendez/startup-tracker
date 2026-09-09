@@ -44,7 +44,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -203,20 +203,55 @@ def connector_config(ctx: typer.Context, name: str) -> ConnectorConfig:
         ctx.fail(str(exc.args[0]))
 
 
-def require_contact_email(settings: Settings, names: Iterable[str]) -> None:
-    """Fail fast (exit 1) before any run starts when a selected connector needs a contact email
-    and ``CONTACT_EMAIL`` is unset (SPEC §4: SEC's fair-access policy requires one)."""
-    if settings.contact_email is not None:
-        return
+def require_contact_email(settings: Settings, names: Sequence[str], *, named: bool) -> list[str]:
+    """The connectors to actually run, given that :data:`CONTACT_REQUIRED` needs
+    ``CONTACT_EMAIL`` and it may be unset (SPEC §4: SEC's fair-access policy requires one).
+
+    The two selections mean different things, so they get different answers.
+
+    ``--connector sec_edgar`` (``named``) asks for *that* connector. It cannot run, so this
+    fails fast with exit 1 and writes no ``FetchRun`` — there is nothing else the invocation
+    could have meant, and a run doomed before it starts should not leave a row (SPEC §7.2's
+    one exception, and the shape the README documents).
+
+    ``--all`` asks for every enabled connector, and refusing the eight that are ready because
+    the ninth is unconfigured is not what was asked. It is also the *first* command a new
+    checkout runs, so the all-or-nothing reading ends a first run with an empty database and no
+    roles, which reads as the project being broken rather than as one setting being unset. So
+    the connectors that need an address are dropped with a warning naming them and the variable,
+    and the rest run. That is the same call the seed loader makes for an unreachable domain
+    (SPEC §10: "log rather than failing the run") and the one this module already makes when
+    ``--all`` selects nothing at all: say so on stderr, carry on, and let the exit status be
+    decided by the runs that did happen.
+
+    Deliberately *not* an error exit for ``--all``: nothing failed. The skip is visible on
+    stderr, in the absence of a summary line, and on ``/runs`` as a connector with no recent
+    successful run.
+    """
     needing = sorted(name for name in names if name in CONTACT_REQUIRED)
-    if not needing:
-        return
+    if settings.contact_email is not None or not needing:
+        return list(names)
+    joined = ", ".join(needing)
+    hint = f"set {CONTACT_EMAIL_VAR}=you@example.com in the environment or .env"
+    if named:
+        typer.echo(
+            f"error: {joined} needs a contact email in the User-Agent (SEC fair-access "
+            f"policy, SPEC §4): {hint}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    remaining = [name for name in names if name not in CONTACT_REQUIRED]
     typer.echo(
-        f"error: {', '.join(needing)} needs a contact email in the User-Agent (SEC fair-access "
-        f"policy, SPEC §4): set {CONTACT_EMAIL_VAR}=you@example.com in the environment or .env",
+        f"warning: skipping {joined} — it needs a contact email in the User-Agent (SEC "
+        f"fair-access policy, SPEC §4): {hint}. "
+        + (
+            f"Running the other {len(remaining)} connector(s)."
+            if remaining
+            else "Nothing else is enabled, so this run does nothing."
+        ),
         err=True,
     )
-    raise typer.Exit(code=1)
+    return remaining
 
 
 def build_connectors(ctx: typer.Context, names: Sequence[str]) -> list[Target]:
@@ -375,8 +410,12 @@ def refresh(
     fetch_runs (SPEC §7.2); a run whose row could not be written at all is marked
     fetch_run=not-recorded. Prints one summary line per connector to stdout. Exit status: 0 when
     every run ended ok or partial (partial prints a warning), 1 when any run ended error or was
-    not recorded, when CONTACT_EMAIL is missing for a connector that needs it, or when the
-    settings are invalid; 2 for a usage error.
+    not recorded, when CONTACT_EMAIL is missing for the connector --connector *named*, or when
+    the settings are invalid; 2 for a usage error.
+
+    Under --all a connector needing an unset CONTACT_EMAIL is skipped with a warning and the
+    rest still run, because --all asks for every enabled connector and one unconfigured source
+    is not a reason to refuse the others.
     """
     settings = get_settings()
     names = select_connectors(ctx, connector, all_)
@@ -391,7 +430,11 @@ def refresh(
             err=True,
         )
         return
-    require_contact_email(settings, names)
+    names = require_contact_email(settings, names, named=connector is not None)
+    if not names:
+        # Every selected connector was dropped for want of a contact email. Nothing failed and
+        # the warning above already said so, so this exits 0 rather than inventing a failure.
+        return
     targets = build_connectors(ctx, names)
     statuses = asyncio.run(refresh_all(targets, settings=settings, since=since_at))
     if enums.FetchRunStatus.ERROR in statuses:

@@ -55,7 +55,10 @@ make refresh                       # 6. --all: every enabled connector (~30 min)
    database once step 5 has absorbed `sec_edgar`'s backfill: `company_site` visits real
    companies' careers pages at a request every two seconds, and `ycombinator` walks the whole
    directory one batch at a time. Good: a summary line per connector, all `ok` or `partial`, and
-   exit 0.
+   exit 0. With `CONTACT_EMAIL` still unset this prints a `warning: skipping sec_edgar …` and
+   runs the other eight rather than refusing the sweep — `--all` asks for every enabled
+   connector, and one unconfigured source is not a reason to withhold the rest. Naming that
+   connector outright (step 5) is still an error, because there is nothing else it could mean.
 
 Then open <http://localhost:8000> for the company list and <http://localhost:8000/runs> for
 ingestion health. On `/runs`, good is: every *implemented* connector showing a recent "last ok"
@@ -68,6 +71,54 @@ ever be Stale. All three are the design, not a fault.
 
 From here on the scheduler keeps it current on its own; you never need to run `refresh` again
 unless you want data *now*.
+
+### Running without Docker
+
+Every `make` target above shells out to `docker compose`, so on a machine without Docker they
+all fail the same way — `make: docker: No such file or directory`. Compose is how this project
+is *packaged*, not what it needs: the whole thing is a Postgres server and some Python
+processes, and it runs natively.
+
+```sh
+brew install postgresql@16 uv          # 1. the two things Compose was providing
+brew services start postgresql@16      # 2. starts now and again at login
+psql -d postgres -c "CREATE ROLE tracker WITH LOGIN SUPERUSER PASSWORD 'tracker'"
+psql -d postgres -c "CREATE DATABASE tracker OWNER tracker"
+cp .env.example .env                   # 3. the URLs in it already point at localhost:5432
+uv sync                                # 4. the locked dependency set
+uv run python cli.py migrate           # 5. then seed, refresh, ... as below
+```
+
+`SUPERUSER` is not laziness: the first migration runs `CREATE EXTENSION pg_trgm` (SPEC §5, §8),
+`pg_trgm` is not a *trusted* extension, and so only a superuser may create it. It is what
+`POSTGRES_USER` already is inside the `postgres:16` image, so this matches Compose rather than
+departing from it. Homebrew's cluster is UTF-8, which matters — a `SQL_ASCII` one rejects the
+`\uXXXX` escapes that turn up in scraped JSONB payloads.
+
+Homebrew keeps `postgresql@16` keg-only, so `psql` is at
+`/opt/homebrew/opt/postgresql@16/bin/psql` until you put that directory on your `PATH`.
+
+Then, instead of the `make` targets:
+
+| Compose | Native |
+|---|---|
+| `make up` | `brew services start postgresql@16`, plus the two processes below |
+| `make down` | `brew services stop postgresql@16` |
+| `make migrate` | `uv run python cli.py migrate` |
+| `make seed` | `uv run python cli.py seed` |
+| `make refresh` | `uv run python cli.py refresh --all` |
+| `make refresh CONNECTOR=x` | `uv run python cli.py refresh --connector x` |
+| the `app` service | `uv run uvicorn web.app:app --port 8000` (add `--reload` while editing) |
+| the `scheduler` service | `uv run python scheduler.py` |
+| `docker compose run --rm app python cli.py stats` | `uv run python cli.py stats` |
+
+`make test` and `make lint` need no translation — they run on the host and only ever needed
+`uv`. Set `TEST_DATABASE_URL` in `.env` (see `.env.example`) so `pytest` uses this server
+instead of starting a testcontainers Postgres, which would want Docker again.
+
+The two long-running processes are the trade you are making: Compose supervises `app` and
+`scheduler` for you and restarts them, whereas natively they are yours to keep alive — run each
+in its own terminal, or wrap them in `launchd` if you want them back after a reboot.
 
 ## Seeding
 

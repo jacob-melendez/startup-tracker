@@ -304,12 +304,40 @@ def test_sec_edgar_without_a_contact_email_fails_fast(
     assert fake_run.calls == [], "no FetchRun may be attempted without a contact email"
 
 
-def test_all_without_a_contact_email_fails_before_any_run(
+def test_all_without_a_contact_email_skips_that_connector_and_runs_the_rest(
     runner: CliRunner, fake_run: FakeRunConnector
 ) -> None:
+    """``--all`` asks for every enabled connector; one unconfigured source is not a reason to
+    refuse the other eight.
+
+    This is the *first* command a fresh checkout runs (README step 6), so the all-or-nothing
+    reading ended a first run with an empty database and no roles at all — which reads as the
+    project being broken rather than as one setting being unset. SPEC §4 requires the address
+    for SEC alone; nothing else here needs one. Same call the seed loader makes for an
+    unreachable domain (SPEC §10, "log rather than failing the run").
+    """
     result = invoke(runner, "refresh", "--all")
-    assert result.exit_code == 1
+
+    assert result.exit_code == 0, "nothing failed — one connector was skipped, not run and lost"
+    assert "sec_edgar" in result.output
     assert "CONTACT_EMAIL" in result.output
+    ran = [call.connector.name for call in fake_run.calls]
+    assert "sec_edgar" not in ran, "it cannot run without an address and must not be attempted"
+    assert len(ran) > 1, "every other enabled connector still runs"
+    assert ran == [name for name in ran if name not in {"sec_edgar"}]
+
+
+def test_a_named_connector_still_fails_fast_without_a_contact_email(
+    runner: CliRunner, fake_run: FakeRunConnector
+) -> None:
+    """Naming the one connector that cannot run is different from asking for all of them.
+
+    ``--connector sec_edgar`` has no other possible meaning, so it stays an error with exit 1
+    and no ``FetchRun`` — the shape the README documents at step 5. The two selections diverge
+    on purpose; this test and the one above are the pair that pins the difference.
+    """
+    result = invoke(runner, "refresh", "--connector", "sec_edgar")
+    assert result.exit_code == 1
     assert fake_run.calls == []
 
 
