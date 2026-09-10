@@ -1,0 +1,153 @@
+# SPEC §6, §12 Phase 8: the outreach pitch — the drafts this app hands you, and the two lists
+# that decide who it hands them to. The ONLY place any of it is written; no sentence of pitch
+# lives in Python (CLAUDE.md: "edit YAML, not Python"). Loaded and validated by
+# `ingest/config.py` (`load_outreach_config`), rendered by the company panel.
+#
+# Why the words are config. Startups do not advertise part-time work — they invent it for a
+# specific person who asks — so this app's job ends at "here is a reachable human, here is a
+# first draft", and the draft is the variable that decides whether any of it works. A specific
+# scoped offer ("I can own X for 10-15 hours a week this quarter") beats "do you have any
+# openings?" by a wide margin, and the only way to find the version that works for you is to
+# rewrite it after every ten sends. Rewriting it must never be a code change.
+#
+# Nothing here is sent for you. `mailto:` hands the draft to your own mail client and the
+# LinkedIn note is text you paste into a connection request yourself: no request handler makes
+# an outbound call (SPEC §2) and nothing ever fetches LinkedIn (SPEC §4).
+#
+# Placeholders are Python `str.format` fields, and the loader fails on a name it does not know
+# rather than letting a typo raise inside a request handler:
+#   email.subject, email.body   {company}
+#   linkedin.note               {company}, {person}
+# A brace you mean literally must be doubled ({{ like this }}).
+#
+# Keys:
+#   email.subject   subject line of the `mailto:` draft. One line, no newline.
+#   email.body      body of the same draft. Keep it short for two reasons: a cold email that
+#                   scrolls does not get read, and the whole `mailto:` URL is percent-encoded,
+#                   which adds about half again to its length — mail clients start truncating
+#                   around 2,000 characters, so roughly 1,200 characters of body is the real
+#                   ceiling. The body below is 760 and the URL it builds about 1,200 — the
+#                   numbers the README quotes, measured rather than estimated.
+#   linkedin.note   the draft for a connection request. LinkedIn caps that note at 300
+#                   characters and refuses to send one character more, so the loader fills the
+#                   placeholders with a representative company and person name and fails on load
+#                   if the result does not fit — a draft you cannot paste is not a draft. Longer
+#                   real names exist; the panel clamps what it renders. Leave yourself room.
+#   contact_priority
+#                   who the panel names as the person to ask for, best first. Values are
+#                   `Person.role_type` (SPEC §5): founder, exec, eng_lead, recruiter. Each at
+#                   most once — the list is an order, so a repeat is unreachable.
+#   role_address_prefixes
+#                   local parts that mark an address as a shared inbox rather than a person.
+#                   Bare local part, no `@`.
+#   entity_markers  words that prove a "person" is a legal entity, not a human.
+#
+# The templates below are the shipped starting point, not advice: they are yours to rewrite, and
+# they are written in the first person as the one person who runs this app. Fill in the bracketed
+# signature line at the end of the email before you send anything.
+
+email:
+  subject: "Stanford student, 10-15 hrs/week for {company}"
+
+  # `>-` is YAML's *folded* block: the line breaks below are for reading the file, not for the
+  # mail client. Each paragraph is sent as one long line and the recipient's client wraps it,
+  # which is what survives being read on a phone; hard-wrapped lines do not. Folding costs one
+  # oddity, and it is the one thing to know before editing this text: a single blank line folds
+  # to a single newline, so paragraphs are separated by TWO blank lines to keep a blank line
+  # between them in the sent mail.
+  body: >-
+    Hi - I'm a Stanford student with 10-15 hours a week free this quarter, and I'd
+    rather spend them shipping something at {company} than on another class project.
+
+
+    The offer is specific: pick one thing nobody has had a spare week for - an internal
+    tool, a data pipeline that keeps breaking, thin test coverage, a prototype of the
+    feature that keeps getting deferred - and I will own it end to end. [your stack],
+    small reviewable pull requests, and I'm local, so I can come in and work next to the
+    team rather than over email.
+
+
+    If it is easier to judge the work than the pitch: give me one scoped task as a
+    two-week trial and see what comes back.
+
+
+    Either way, thanks for reading.
+
+
+    [your name] - [your GitHub or portfolio link]
+
+linkedin:
+  # Deliberately well short of the 300-character cap. The loader measures this filled in with a
+  # representative pair of names, and a real company or founder with a longer name has to fit in
+  # the same budget: as written it renders to 252 characters for an 18-character company and a
+  # 20-character person, and 274 for the longest plausible pair. Spend the slack on their name,
+  # not on another sentence — the ask at the end is the only part that has to survive.
+  note: >-
+    Hi {person} - I'm a Stanford student with 10-15 hrs/week free this quarter, and
+    I'd like to spend them at {company}. Give me one thing nobody has had a week for -
+    an internal tool, a prototype - and I'll own it. Worth a short chat?
+
+# Founder first, recruiter last. This inverts the usual advice on purpose, and the corpus is the
+# argument: measured on 2026-09-09, 866 of these companies name a founder and exactly 2 of
+# 17,172 stored people are recruiters. Companies this small have no talent function, and a
+# recruiter fills approved headcount while only a founder can invent a role that does not exist
+# yet — which is the entire premise of this phase. Reorder it here if that stops being true.
+contact_priority: [founder, exec, eng_lead, recruiter]
+
+# SPEC §12 Phase 8: an address whose local part is one of these is a ticket queue, and a scoped
+# personal offer sent to a ticket queue converts close to zero. Measured on the live database,
+# 8 of the 9 addresses crawled off company sites are one of these and 22 of the 25 found in
+# "Who is hiring?" comments are a named person's own address — the split is worth showing.
+#
+# Display only: the panel renders a quiet "general inbox" hint beside the address and hides
+# nothing, because classification here never excludes (SPEC §7.1). Removing a prefix removes
+# the hint; it never removes a company.
+#
+# The second row is what the Phase 8 backfill turned up that the first row missed, counted over
+# every published address on 2026-09-09: `hiring` (6), `recruiting` (3), `accommodations` (2),
+# `hn` (2) and `join` (1) are all queues, and `hr` is one everywhere even though this corpus
+# happens not to hold one. A `+tag` is cut before the comparison, so `careers+hn@` is a queue and
+# `austin+hn@` is Austin — plus-addressing is how a person tags their own mail, and the two read
+# identically until you cut the tag.
+role_address_prefixes:
+  [
+    info, support, hello, contact, jobs, careers, team, admin, sales, press,
+    hiring, recruiting, accommodations, hn, join, hr, talent, people, apply,
+  ]
+
+# A person taken from an SEC Form D "related persons" list is not always a person: EDGAR yields
+# names like ". <Something> Real Estate Debt Fund GP LLC", stored with role_type=founder because
+# that is what the filing calls it. The panel must never draft a note to an LLC, so a candidate
+# whose name carries one of these markers is skipped and the next tier is offered instead.
+#
+# The cost of a marker is a real person passed over, so keep them to words no human name
+# contains, and expect them to be compared case-insensitively and as whole words — a short one
+# like `GP` is only safe because it cannot match inside a surname. An empty list disables the
+# guard entirely, which is allowed and means every EDGAR filing entity is offered as somebody
+# to message.
+#
+# The spelled-out forms earn their place by measurement, not by symmetry: run against every
+# stored person on 2026-09-09, the abbreviations alone still left 54 filings offered as people to
+# write to — "Limited Liability Company Tom Kirdahy Productions", "n/a Deloitte LLP",
+# "Delaware Life Insurance Company" — because EDGAR writes out what a form abbreviates. Adding
+# them costs 12 companies a named door, and every one of those 12 is a filing rather than a
+# human, so the door it falls back to is the honest one. `Holdings` was measured too and left
+# out on purpose: it would have caught one more entity and one name that reads like a person's.
+entity_markers:
+  [
+    LLC,
+    "L.L.C.",
+    "L.P.",
+    LP,
+    LLP,
+    "Inc.",
+    Corporation,
+    Company,
+    Limited,
+    Liability,
+    Ltd,
+    Fund,
+    GP,
+    Trust,
+    Partners,
+  ]

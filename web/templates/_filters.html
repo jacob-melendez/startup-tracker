@@ -186,6 +186,23 @@
     </label>
   </div>
 
+  {#- §12 Phase 8's "way in". Named for what it gets the reader — an address to write to —
+      rather than for `contacts.kind`, because the point of the box is the outreach, not the
+      row it proves exists. It is *published* addresses only: a `constructed` contact is a URL
+      this app built, not something anyone offered (§6), so a company whose only email is
+      constructed is not one you can write to and does not belong in this list.
+
+      Opt-in and off by default like every checkbox in this row (§7.1) — with it clear, the
+      companies that have no address are still listed, which matters because almost none of
+      them do; the LinkedIn door in the expanded row is how you reach those. -#}
+  <div class="field">
+    <label for="f-has-email">
+      <input id="f-has-email" type="checkbox" name="has_email" value="1"
+             {% if filters.has_published_email %}checked{% endif %}>
+      Reachable by email
+    </label>
+  </div>
+
   {%- if is_roles %}
   <div class="field">
     <label for="f-closed">

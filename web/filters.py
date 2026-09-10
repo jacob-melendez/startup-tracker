@@ -21,6 +21,7 @@ parameter            repeats?  meaning
 ``seniority``        yes       ``jobs.seniority``
 ``flexible``         no        ``jobs.flexible_signal`` only — opt-in, never default
 ``open_roles``       no        ``companies.open_job_count > 0``
+``has_email``        no        an email contact the company itself published
 ``tracking``         yes       ``user_notes.status`` (``none`` includes "no row")
 ``closed``           no        include closed roles — ``/roles`` only
 ``sort``             no        a ``CompanySort`` / ``JobSort`` value
@@ -282,6 +283,7 @@ def shared_filters(
     seniority: Annotated[list[str] | None, Query()] = None,
     flexible: Annotated[str | None, Query()] = None,
     open_roles: Annotated[str | None, Query()] = None,
+    has_email: Annotated[str | None, Query()] = None,
     tracking: Annotated[list[str] | None, Query()] = None,
 ) -> Filters:
     """The filter set both ``/`` and ``/roles`` accept — SPEC §9's "same filter set".
@@ -294,6 +296,11 @@ def shared_filters(
     this side: ``metro`` reaches ``/`` and ``/roles`` because they both depend on this function,
     not because either route was taught about it. A parameter added to one route instead would
     be the drift this function exists to prevent.
+
+    SPEC §12 Phase 8's ``has_email`` arrives the same way, and belongs *only* here. It selects
+    whole companies — an ``EXISTS`` over ``contacts`` — so it can never mark an individual role,
+    which is why :func:`job_highlight_filters` does not accept it: adding it there would put a
+    parameter that means nothing to a role into the panel URL every collapsed row builds.
     """
     text = _text(q) if q else ""
     return Filters(
@@ -316,6 +323,12 @@ def shared_filters(
         seniorities=_enum_list("seniority", enums.Seniority, seniority),
         flexible_only=_flag(flexible),
         has_open_roles=_flag(open_roles),
+        # Parsed with ``_flag`` exactly like ``open_roles``: an opt-in checkbox, absent unless
+        # ticked, so it hides nothing from the default view (SPEC §7.1). The wire name is
+        # ``has_email`` — what the box is *for*, a way in — while the field it sets says what
+        # has to be true for that: an address the company published, never one we constructed
+        # for it (SPEC §6).
+        has_published_email=_flag(has_email),
         tracking_statuses=_enum_list("tracking", enums.TrackingStatus, tracking),
     )
 

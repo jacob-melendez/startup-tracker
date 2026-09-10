@@ -17,6 +17,12 @@ two are independent semi-joins, so they compose as an ``AND`` over a company's w
 offices rather than as one geography, and neither may turn a company with several matching
 offices into several rows — which would break the page size and the keyset order at once. The
 ``metro_*`` tests below are that pair of properties.
+
+SPEC §12 Phase 8 adds a fifth, and it is the same shape a third time: **``has_published_email``
+is a semi-join over ``contacts``**, because a company may publish several addresses and an
+inner join would return it once per address. What is new is the second half of its predicate —
+``confidence``, which is what separates an address somebody offered from a link this app built
+out of a company name (§6), and therefore what the filter's whole promise rests on.
 """
 
 from __future__ import annotations
@@ -24,10 +30,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import enums
-from db.models import Company
+from db.models import Company, Contact
 from db.queries import (
     MAX_PAGE_SIZE,
     PAGE_SIZE,
@@ -55,6 +62,7 @@ from tests.support_web import (
     NOW,
     make_bookmark,
     make_company,
+    make_contact,
     make_job,
     make_location,
     make_note,
@@ -586,6 +594,113 @@ async def test_has_open_roles_reads_the_denormalized_count(session: AsyncSession
     assert ids(page) == [open_roles.id]
     # The filter and the badge must agree: both come from `companies.open_job_count`.
     assert page.rows[0].open_job_count == 1
+
+
+async def test_has_published_email_is_a_semi_join_over_addresses_somebody_published(
+    session: AsyncSession,
+) -> None:
+    """SPEC §12 Phase 8's "way in": one row per reachable company, and *published* means it.
+
+    Three properties, and the corpus is built so that none of them can pass by accident.
+
+    **Two published addresses are still one row.** ``contacts`` is many-per-company, so an
+    inner join would emit Reachable Labs twice — costing the 50-row page a row and leaving the
+    keyset cursor pointing at a company the next page has already shown. That is the reason
+    this predicate is an ``EXISTS``, exactly as ``city`` and ``metro`` are, and two addresses
+    on one company is the only shape that tells a semi-join from a join.
+
+    **Both halves of ``kind = email AND confidence = published`` are load-bearing**, and the
+    corpus holds the company that proves each. Guessed Labs has a ``constructed`` address:
+    SPEC §6 forbids this app from ever inventing one — no pattern-guessing, no SMTP probing —
+    while the column will happily hold it, so ``confidence`` is what keeps the filter's promise
+    that somebody offered this address. Paged Labs has a careers page it published itself:
+    a real row, published by the company, that is not something you can write to — so ``kind``
+    is what stops "has any contact at all" from passing for "has a way in", which on the live
+    database would be the difference between 31 companies and all 9,220 of them.
+
+    **It constrains the company, not a role.** Roleless Labs has an address and no jobs at all,
+    and is returned. Folding this into ``Filters.has_job_filters`` — where it looks at first
+    glance like it belongs, since it sits beside ``has_open_roles`` in the parameter table —
+    would quietly add "and is hiring" to it, which is the opposite of the point: an unposted
+    part-time role is the thing this phase exists to go asking for.
+    """
+    reachable = await make_company(session, "Reachable Labs")
+    await make_contact(
+        session,
+        reachable,
+        kind=enums.ContactKind.EMAIL,
+        value="ada@reachable.example",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    await make_contact(
+        session,
+        reachable,
+        kind=enums.ContactKind.EMAIL,
+        value="grace@reachable.example",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    newer_role = await make_job(session, reachable, "Engineer", posted_at=NOW)
+    older_role = await make_job(session, reachable, "Designer", posted_at=NOW - DAY)
+
+    roleless = await make_company(session, "Roleless Labs")
+    await make_contact(
+        session,
+        roleless,
+        kind=enums.ContactKind.EMAIL,
+        value="hiring@roleless.example",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+
+    guessed = await make_company(session, "Guessed Labs")
+    await make_contact(
+        session,
+        guessed,
+        kind=enums.ContactKind.EMAIL,
+        value="hello@guessed.example",
+        confidence=enums.ContactConfidence.CONSTRUCTED,
+    )
+    await make_job(session, guessed, "Engineer")
+
+    paged = await make_company(session, "Paged Labs")
+    await make_contact(
+        session,
+        paged,
+        kind=enums.ContactKind.CAREERS_PAGE,
+        value="https://paged.example/careers",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+
+    searchable = await make_company(session, "Searchable Labs")
+    await make_contact(
+        session,
+        searchable,
+        kind=enums.ContactKind.LINKEDIN_PEOPLE,
+        value="https://www.linkedin.com/search/results/people/?keywords=Searchable+Labs",
+        confidence=enums.ContactConfidence.CONSTRUCTED,
+    )
+    await make_company(session, "Silent Labs")  # no contacts row at all
+
+    # The premise the "appears once" assertion rests on: there really are two rows for a join to
+    # fan out on. Without this, deleting one of the two addresses above would leave that
+    # assertion passing and testing nothing.
+    stored = await session.scalar(
+        select(func.count()).select_from(Contact).where(Contact.company_id == reachable.id)
+    )
+    assert stored == 2
+
+    wanted = Filters(has_published_email=True)
+    page = await company_list_page(session, filters=wanted, sort=CompanySort.NAME)
+    assert ids(page) == [reachable.id, roleless.id]
+
+    # ``/roles`` repeats the same predicates over a second join, where a fan-out would multiply
+    # per role *and* per address: two roles times two addresses is four rows of two jobs.
+    assert ids(await job_list_page(session, filters=wanted)) == [newer_role.id, older_role.id]
+
+    # Off, every one of them is listed — the filter narrows, it is never a default (§7.1). This
+    # is what says the three exclusions above were the predicate rather than missing rows.
+    everything = set(ids(await company_list_page(session, limit=MAX_PAGE_SIZE)))
+    assert len(everything) == 6
+    assert {guessed.id, paged.id, searchable.id} <= everything
 
 
 async def test_tracking_none_matches_a_company_with_no_user_note(session: AsyncSession) -> None:

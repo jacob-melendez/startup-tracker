@@ -8,8 +8,15 @@ third-party pages (SPEC §4, Tiers 1 to 3), which makes that a real injection ve
 :func:`safe_url` exists and **every externally sourced URL goes through it** before it reaches
 an attribute.
 
-Nothing here touches the database or the network; these are pure display helpers. The one thing
-any of them reads off the disk is ``config/regions.yaml``, for :func:`site_name`.
+:func:`mailto_url` is the one deliberate exception to that rule, and it is an exception in the
+safe direction: a ``mailto:`` is not an ``http(s)`` URL, so :func:`safe_url` refuses it **by
+design**, and relaxing ``SAFE_SCHEMES`` to let it through would re-open the ``href`` for every
+other scheme on every other link in the app. The address is instead percent-encoded here, which
+is what an ``href`` needs anyway (SPEC §12 Phase 8).
+
+Nothing here touches the database or the network; these are pure display helpers. The two things
+any of them read off the disk are ``config/regions.yaml``, for :func:`site_name`, and
+``config/outreach.yaml``, for the drafts :func:`mailto_url` and :func:`shared_inbox` work from.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from starlette.requests import Request
 from starlette.templating import Jinja2Templates
@@ -26,8 +33,9 @@ from starlette.templating import Jinja2Templates
 # the connector cadences through it — and it does not put a handler one import away from an
 # outbound call (SPEC §2): that module parses local YAML and nothing else. No httpx, no
 # connector, no fetch; ``tests/test_web_acceptance.py`` exempts it from FORBIDDEN_IMPORTS on
-# exactly those grounds.
-from ingest.config import load_regions_config
+# exactly those grounds. ``load_outreach_config`` arrives through the same door and on the same
+# terms: it parses ``config/outreach.yaml`` and hands back a frozen model (SPEC §12 Phase 8).
+from ingest.config import LINKEDIN_NOTE_LIMIT, load_outreach_config, load_regions_config
 from web import labels
 from web.labels import EM_DASH
 
@@ -53,6 +61,26 @@ _AGO_MAX_DAYS = 90
 _SUB_SECOND_PRECISION_BELOW = 10
 
 _MONEY_UNITS = ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K"))
+
+#: The ceiling :func:`mailto_url` keeps the whole ``mailto:`` under. Mail clients start
+#: truncating somewhere around 2,000 characters, they do it silently, and they do it at the
+#: *end* — which is where the ask is. Cutting the draft here instead means the cut is
+#: deliberate, testable, and always falls in the body rather than wherever the client's own
+#: limit happens to land (SPEC §12 Phase 8).
+MAILTO_MAX_URL = 1_900
+#: The share of that ceiling the subject may spend, encoded. A subject is one line and no mail
+#: client shows this much of it in a list view, so the cap costs nothing real — and without one a
+#: single overlong company name (``{company}`` is interpolated into the subject *and* the body)
+#: could spend the whole budget before the body was reached, which is the one outcome that would
+#: make the ceiling above a promise this function does not keep.
+_MAILTO_SUBJECT_MAX = 200
+
+#: Characters left un-escaped in the address half of a ``mailto:``. Only ``@`` is added to what
+#: :func:`urllib.parse.quote` already leaves alone: a ``?`` or ``&`` that came off a scraped page
+#: must become ``%3F``/``%26`` rather than starting the query string, since an address that can
+#: open a query can append its own ``bcc=`` to the draft. That is the same class of injection
+#: :func:`safe_url` exists for, arriving through the one link that cannot use it.
+_MAILTO_ADDRESS_SAFE = "@"
 
 
 def safe_url(value: object) -> str | None:
@@ -80,6 +108,114 @@ def safe_url(value: object) -> str | None:
     if parts.scheme.lower() not in SAFE_SCHEMES or not parts.netloc:
         return None
     return candidate
+
+
+def mailto_url(address: object, company: object) -> str:
+    """The ``mailto:`` href for one published address, subject and body already filled in from
+    ``config/outreach.yaml`` — or ``""`` when ``address`` is not an address (SPEC §6, §12 Phase 8).
+
+    The email door of the company panel, and the *only* href in the app that does not go through
+    :func:`safe_url`. That is not an oversight to be fixed by widening :data:`SAFE_SCHEMES`: a
+    ``mailto:`` has no host, so ``safe_url`` would have to stop requiring one, and every scraped
+    ``http:evil`` link in the app would be re-admitted to buy this one anchor. The scheme is
+    written here instead, where it is a constant rather than something read off a page, and the
+    parts that *did* come off a page are percent-encoded (:data:`_MAILTO_ADDRESS_SAFE`).
+
+    ``company`` fills the templates' ``{company}`` placeholder and may be given as the name or as
+    the company row itself — the template that calls this filter holds the row, and a
+    ``str(company)`` that quietly rendered ``<db.models.Company object at 0x…>`` into a subject
+    line would be found by the recipient rather than by a test.
+
+    The whole URL is held to :data:`MAILTO_MAX_URL` characters. The body absorbs almost all of
+    any cut — the subject has its own small :data:`_MAILTO_SUBJECT_MAX` so that one absurdly long
+    company name cannot spend the budget before the body is reached — and the shipped draft
+    builds a URL of about 1,240, so in practice nothing is cut at all.
+
+    ``""`` for anything that is not an address, so a template can guard with
+    ``{% if href %}`` exactly as it does around :func:`safe_url`.
+    """
+    target = _mail_address(address)
+    if target is None:
+        return ""
+    outreach = load_outreach_config()
+    name = _company_name(company)
+    subject = _quote_to_fit(outreach.email_subject.format(company=name), _MAILTO_SUBJECT_MAX)
+    prefix = f"mailto:{target}?subject={subject}&body="
+    return prefix + _quote_to_fit(
+        outreach.email_body.format(company=name), MAILTO_MAX_URL - len(prefix)
+    )
+
+
+def shared_inbox(address: object) -> bool:
+    """True when this address is a shared inbox rather than one person's own (SPEC §12 Phase 8).
+
+    ``info@``/``jobs@`` is a ticket queue, and the scoped personal offer this app drafts converts
+    close to zero when it lands in one; the panel says which kind an address is so the reader can
+    weigh the door before spending a draft on it. **Display only** — nothing is hidden or dropped
+    on the strength of this, per SPEC §7.1's rule that classification never excludes.
+
+    The comparison is against the local part *whole*, not a prefix scan, because that is what the
+    configured vocabulary is (``ingest.config.OutreachConfig._bare_local_parts`` rejects anything
+    else): ``info@`` is a queue and ``information-security@`` is a team. A ``+tag`` suffix is cut
+    first, since it routes to the same inbox it is a tag on.
+    """
+    if not isinstance(address, str):
+        return False
+    local, separator, _domain = address.strip().partition("@")
+    if not separator:
+        return False
+    return local.partition("+")[0].casefold() in load_outreach_config().role_address_prefixes
+
+
+def _mail_address(value: object) -> str | None:
+    """``value`` percent-encoded for the path of a ``mailto:``, or ``None`` when it is not an
+    address at all.
+
+    Deliberately not a full address grammar — :func:`ingest.contacts.normalize_email` already
+    applied one before the row was stored, and re-litigating it here would only mean the panel
+    and the database disagreed about what a contact is. What is checked is what would break the
+    *URL*: no ``@`` and there is nothing to send to, and internal whitespace (a newline most of
+    all) is both impossible in an address and the classic way a header is injected into one.
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if "@" not in candidate or any(character.isspace() for character in candidate):
+        return None
+    return quote(candidate, safe=_MAILTO_ADDRESS_SAFE)
+
+
+def _company_name(value: object) -> str:
+    """The name to interpolate into a draft: the string itself, or the ``name`` of a row."""
+    if isinstance(value, str):
+        return value
+    name = getattr(value, "name", None)
+    return name if isinstance(name, str) else ""
+
+
+def _quote_to_fit(text: str, budget: int) -> str:
+    """``text`` percent-encoded, cut to at most ``budget`` characters **of encoded output**.
+
+    Encoded one character at a time once a cut is needed, which is what keeps the cut off the
+    middle of an escape: slicing the encoded string instead can leave a trailing ``%E2`` that no
+    client can decode, and the shipped drafts contain the punctuation that produces three-byte
+    escapes. Per-character quoting concatenates to exactly what quoting the whole string gives,
+    because :func:`urllib.parse.quote` encodes each character's UTF-8 bytes independently.
+    """
+    if budget <= 0:
+        return ""
+    encoded = quote(text)
+    if len(encoded) <= budget:
+        return encoded
+    kept: list[str] = []
+    used = 0
+    for character in text:
+        piece = quote(character)
+        if used + len(piece) > budget:
+            break
+        kept.append(piece)
+        used += len(piece)
+    return "".join(kept)
 
 
 def money(value: object) -> str:
@@ -257,6 +393,11 @@ def site_name() -> str:
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 templates.env.filters["safe_url"] = safe_url
+# The email door (SPEC §12 Phase 8). `mailto_url` takes the company alongside the address —
+# `{{ contact.value | mailto_url(company) }}` — because the draft names the company in both the
+# subject and the body, and `shared_inbox` is the hint rendered beside it.
+templates.env.filters["mailto_url"] = mailto_url
+templates.env.filters["shared_inbox"] = shared_inbox
 templates.env.filters["money"] = money
 templates.env.filters["ago"] = ago
 templates.env.filters["day"] = day
@@ -268,6 +409,11 @@ templates.env.globals["qs"] = query_string
 # The <title> and the brand, in the one place the region name is allowed to come from (§12
 # Phase 7). Called by the templates — `{{ site_name() }}` — not interpolated here.
 templates.env.globals["site_name"] = site_name
+# The cap the panel prints beside the drafted note ("… of 300 characters"). Exposed rather than
+# written into the template because it is LinkedIn's limit, enforced in `ingest.config` when the
+# pitch file loads and enforced again when the note is clamped — a third copy of the number in
+# markup is the one that would go on claiming 300 after the other two had moved (§12 Phase 8).
+templates.env.globals["LINKEDIN_NOTE_LIMIT"] = LINKEDIN_NOTE_LIMIT
 # The filter selects need the enum vocabularies themselves, and Jinja cannot import a module.
 templates.env.globals["ROLE_FAMILY_ORDER"] = labels.ROLE_FAMILY_ORDER
 templates.env.globals["EMPLOYMENT_TYPE_ORDER"] = labels.EMPLOYMENT_TYPE_ORDER

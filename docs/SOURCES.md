@@ -306,8 +306,10 @@ be read — including the contact addresses they put in them (SPEC §6).
 
 ### Terms and rate limit
 
-* **5 requests/second**; one monthly run reads one thread and up to
-  `options.max_comments_per_thread` (400) comments.
+* **5 requests/second**; one monthly run reads `options.max_threads` threads, newest first — 3 as
+  shipped, because the run is scheduled for an hour this machine is usually asleep and a missed
+  month is otherwise lost for good — and up to `options.max_comments_per_thread` (400) comments
+  from each. The archive was backfilled once at 24; see the README's Contacts section.
 * `robots.txt` disallows `/` but allows `/*.json$` — exactly the URLs this connector builds, and
   the shared client enforces that per RFC 9309 (a `$`-anchored `Allow` the older `urllib` parser
   would have ignored).

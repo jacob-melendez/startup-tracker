@@ -48,6 +48,13 @@ adds nothing to the schema — ``locations.metro`` has carried the region since 
 * :attr:`StatsSnapshot.companies_by_metro` — the operational "did the new region ingest
   anything?" line of ``cli.py stats``.
 
+Phase 8 (SPEC §12 Phase 8) turns the browse layer into an outreach queue, and needs one
+predicate rather than a query of its own:
+
+* :attr:`Filters.has_published_email` — "companies there is actually a way in to", a semi-join
+  over ``contacts`` in :func:`_company_predicates`. Both page functions splice in whatever that
+  returns, so the one arm gives the company list and the role list the same filter.
+
 None of it fetches anything: a web request handler only ever reads the local database (SPEC §2).
 """
 
@@ -382,6 +389,12 @@ class Filters:
     seniorities: tuple[enums.Seniority, ...] = ()
     flexible_only: bool = False
     has_open_roles: bool = False
+    #: SPEC §12 Phase 8's "has a way in": companies carrying an email the company itself
+    #: published. Deliberately narrower than "has any email contact" — a ``constructed``
+    #: contact is a deterministic URL we built rather than an address anyone offered (SPEC §6),
+    #: so counting one here would return a company you cannot actually write to. Opt-in like
+    #: every other filter, so it hides nothing from the default view (SPEC §7.1).
+    has_published_email: bool = False
     tracking_statuses: tuple[enums.TrackingStatus, ...] = ()
     #: ``/roles`` only, and never on by default — a closed job is history, not a listing.
     include_closed_jobs: bool = False
@@ -786,6 +799,27 @@ def _company_predicates(filters: Filters, *, now: datetime) -> list[ColumnElemen
     if filters.has_open_roles:
         # The denormalized column, not an EXISTS — see company_list_page's docstring.
         predicates.append(Company.open_job_count > 0)
+    if filters.has_published_email:
+        # SPEC §12 Phase 8. A semi-join for exactly the reason city and metro are ones:
+        # ``contacts`` is many-per-company, so an inner join would emit a company once per
+        # matching address and break both the page size and the keyset order. There is no
+        # denormalized column to read the way ``has_open_roles`` reads ``open_job_count``, and
+        # this phase adds no migration, so the ``EXISTS`` is the whole implementation.
+        #
+        # Both halves of the predicate matter. ``kind`` because a company's other contacts are
+        # links, not things you can send to; ``confidence`` because SPEC §6 has every company
+        # carrying a *constructed* people-search URL, so an unqualified test would match the
+        # entire table and the filter would narrow nothing.
+        predicates.append(
+            select(Contact.id)
+            .where(
+                Contact.company_id == Company.id,
+                Contact.kind == enums.ContactKind.EMAIL,
+                Contact.confidence == enums.ContactConfidence.PUBLISHED,
+            )
+            .correlate(Company)
+            .exists()
+        )
     if filters.tracking_statuses:
         arms: list[ColumnElement[bool]] = [UserNote.status.in_(filters.tracking_statuses)]
         if enums.TrackingStatus.NONE in filters.tracking_statuses:

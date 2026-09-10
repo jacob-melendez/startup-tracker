@@ -24,6 +24,17 @@ Every one of those runs against **both** entry points, because ``/company/{id}``
 reader keeps and ``/company/{id}/panel`` is the fragment the list opens, and §9 calls the first
 "a standalone, linkable version of" the second.
 
+The third group is what SPEC §12 Phase 8 put *above* both of those, and it starts by asserting
+the panel's section order the other way round from the way this file used to. One open role in
+1,682 here is part-time, because a startup does not advertise part-time work — it invents it
+when a specific person asks — so the row leads with a human to write to and keeps the roles
+table below as evidence of budget rather than as things to apply to. Two doors follow from that
+and both are asserted here: the published address, now a draft you can send rather than a sixth
+link in a list, and — for the 9,189 companies of 9,220 that publish no address at all — the best
+LinkedIn door the stored rows support, which makes it the main path and not a fallback. Nothing
+in either is fetched: the profile URL was published on the company's own site, the search URLs
+are constructed from its name (§6), and the note is text the reader pastes (§2, §4).
+
 The cursor tests at the end belong to the same file only in that they are the other thing a
 hand-edited URL can do: a ``k`` carrying a NUL or a lone surrogate used to reach the driver and
 answer 500 where every other malformed token answers with the 400 page.
@@ -36,6 +47,7 @@ import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -45,6 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from db import enums
 from db.models import Person
 from db.queries import Cursor, CursorError
+from ingest.config import LINKEDIN_NOTE_LIMIT, load_outreach_config
 from tests.support_web import (
     DAY,
     NOW,
@@ -55,6 +68,8 @@ from tests.support_web import (
     make_job,
     refresh_denormalized,
 )
+from web.labels import label_for
+from web.templating import MAILTO_MAX_URL
 
 #: Every ``<th aria-sort=...>`` of a rendered roles table, in column order.
 _ARIA_SORT = re.compile(r'<th scope="col" aria-sort="([a-z]+)"')
@@ -398,8 +413,15 @@ async def test_an_unknown_in_row_parameter_is_a_400_page(
 
 #: The published half of the fixture company. Written out because the assertions are about
 #: *these* strings surviving the round trip into an attribute, not about a shape.
+RICH_NAME = "Atom Computing"
+#: Two addresses at one company, chosen so the SPEC §12 Phase 8 hint has both cases to render:
+#: ``careers`` is one of ``config/outreach.yaml``'s ``role_address_prefixes`` and ``hr`` is not,
+#: which is the difference between a ticket queue and somebody's own inbox.
 CAREERS_EMAIL = "careers@atom-computing.example"
 HR_EMAIL = "hr@atom-computing.example"
+DIRECT_NAME = "Direct Labs"
+FOUNDER_EMAIL = "ada.okonjo@direct-labs.example"
+DIRECT_PROFILE_URL = "https://www.linkedin.com/in/ada-okonjo"
 CAREERS_PAGE = "https://atom-computing.example/careers"
 #: A numeric-id LinkedIn page is real (the recorded Sourcegraph home page has one) and it is
 #: the interesting case: a published value that can never equal the constructed
@@ -427,6 +449,7 @@ PEOPLE_SEARCH = (
     "%28founder+OR+recruiter+OR+%22head+of+engineering%22+OR+%22talent%22%29"
 )
 #: The other company: no site of its own was ever read, so both of its rows are constructed.
+QUIET_NAME = "Quiet Labs"
 QUIET_LINKEDIN = "https://www.linkedin.com/company/quiet-labs"
 QUIET_PEOPLE_SEARCH = (
     "https://www.linkedin.com/search/results/people/?keywords=%22Quiet+Labs%22+"
@@ -447,11 +470,21 @@ class ContactFixture:
     ``rich`` has both halves and two people; ``shortcuts_only`` has nothing published, which is
     the common case for a company no Tier-3 fetch ever visited; ``silent`` has neither, which
     is every company on the day it is seeded.
+
+    SPEC §12 Phase 8 reads the same three as its own three outcomes, without changing a row:
+    ``rich`` published a profile URL (the first tier), ``shortcuts_only`` names somebody who has
+    none (the second), and ``silent`` offers no door at all. That the two sets of shapes coincide
+    is not a coincidence — the door a company offers *is* what it has published about its people
+    — so the Phase 8 tests below reuse these and add a company only for what these cannot show.
     """
 
     rich: int
     shortcuts_only: int
     silent: int
+    #: A personal address *and* a published profile, which is the one ranking the three above
+    #: cannot show: an address that reaches a human outranks even a profile URL, while ``rich``'s
+    #: two queue addresses do not.
+    personal_email: int
 
 
 async def make_person(
@@ -484,7 +517,7 @@ async def contacts(session: AsyncSession) -> ContactFixture:
     (``web.routes.companies._group_contacts``), and a test seeded in the rendered order would
     pass with that sort deleted.
     """
-    rich = await make_company(session, "Atom Computing", domain="atom-computing.example")
+    rich = await make_company(session, RICH_NAME, domain="atom-computing.example")
     for kind, value in (
         (enums.ContactKind.X, X_PROFILE),
         (enums.ContactKind.CONTACT_FORM, HOSTILE_FORM),
@@ -522,7 +555,7 @@ async def contacts(session: AsyncSession) -> ContactFixture:
         role_type=enums.RoleType.EXEC,
     )
 
-    quiet = await make_company(session, "Quiet Labs", domain="quiet-labs.example")
+    quiet = await make_company(session, QUIET_NAME, domain="quiet-labs.example")
     for kind, value in (
         (enums.ContactKind.LINKEDIN_COMPANY, QUIET_LINKEDIN),
         (enums.ContactKind.LINKEDIN_PEOPLE, QUIET_PEOPLE_SEARCH),
@@ -533,8 +566,31 @@ async def contacts(session: AsyncSession) -> ContactFixture:
     await make_person(session, quiet.id, "Sam Okafor", title="Head of Operations")
 
     silent = await make_company(session, "Silent Co", domain="silent-co.example")
+
+    direct = await make_company(session, DIRECT_NAME, domain="direct-labs.example")
+    await make_contact(
+        session,
+        direct,
+        kind=enums.ContactKind.EMAIL,
+        value=FOUNDER_EMAIL,
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    await make_person(
+        session,
+        direct.id,
+        "Ada Okonjo",
+        title="Co-founder",
+        role_type=enums.RoleType.FOUNDER,
+        linkedin_url=DIRECT_PROFILE_URL,
+    )
+
     await session.commit()
-    return ContactFixture(rich=rich.id, shortcuts_only=quiet.id, silent=silent.id)
+    return ContactFixture(
+        rich=rich.id,
+        shortcuts_only=quiet.id,
+        silent=silent.id,
+        personal_email=direct.id,
+    )
 
 
 @pytest.fixture(params=["permalink", "fragment"])
@@ -560,13 +616,33 @@ async def detail_html(
     return response.text
 
 
+def squashed(node: Node) -> str:
+    """A node's visible text with its whitespace collapsed to single spaces."""
+    return " ".join(node.text().split())
+
+
+def panel_section(markup: str, heading: str) -> Node:
+    """One section of the rendered panel, found by the text of its ``<h2>``.
+
+    By heading rather than by a class or a position, because the heading is the only part of a
+    section a reader is promised: the panel has eight sections, they carry one class between
+    them, and SPEC §12 Phase 8 has just changed the order they appear in.
+    """
+    for section in HTMLParser(markup).css("section.panel-section"):
+        found = section.css_first("h2")
+        if found is not None and squashed(found) == heading:
+            return section
+    raise AssertionError(f"the rendered panel has no {heading!r} section")
+
+
 def contact_section(markup: str) -> Node:
     """The panel section headed "Contacts" — SPEC §9's contacts block."""
-    for section in HTMLParser(markup).css("section.panel-section"):
-        heading = section.css_first("h2")
-        if heading is not None and heading.text().strip() == "Contacts":
-            return section
-    raise AssertionError("the rendered panel has no Contacts section")
+    return panel_section(markup, "Contacts")
+
+
+def outreach_section(markup: str) -> Node:
+    """The panel section headed "How to reach them" — SPEC §12 Phase 8's door and its draft."""
+    return panel_section(markup, "How to reach them")
 
 
 def contact_groups(markup: str) -> dict[str, list[Node]]:
@@ -594,9 +670,113 @@ def group_html(groups: dict[str, list[Node]], heading: str) -> str:
     return html.unescape("".join(row.html or "" for row in groups.get(heading, [])))
 
 
-def squashed(node: Node) -> str:
-    """A node's visible text with its whitespace collapsed to single spaces."""
-    return " ".join(node.text().split())
+def email_row(groups: dict[str, list[Node]], address: str) -> Node:
+    """The contacts row that renders one address, from whichever group holds it."""
+    for group in groups.values():
+        for row in group:
+            if address in squashed(row):
+                return row
+    raise AssertionError(f"no contacts row renders {address}")
+
+
+def mailto_parts(anchor: Node) -> tuple[str, dict[str, list[str]]]:
+    """A ``mailto:`` href split into the address it sends to and the draft it carries.
+
+    Read straight off the attribute with no :func:`html.unescape`: the parser has already
+    decoded the entities, and a second pass over a URL whose parameters are separated by bare
+    ``&`` is not merely redundant but the one place in this file where it could change a value.
+    """
+    href = anchor.attributes.get("href") or ""
+    parts = urlsplit(href)
+    assert parts.scheme == "mailto", href
+    return parts.path, parse_qs(parts.query)
+
+
+def door_button(section: Node) -> Node:
+    """The one control the outreach block offers, whichever of the three doors it picked.
+
+    Unpacked as a single element on purpose: two buttons in this block would mean the reader is
+    being asked to choose a door, which is the decision :func:`web.routes.companies.
+    best_outreach_door` exists to have already made.
+    """
+    (button,) = section.css("a.button")
+    return button
+
+
+def drafted_note(section: Node) -> str:
+    """The draft in the outreach block's ``<textarea>``, as it would be pasted.
+
+    The leading newline is dropped for the reason ``tests.support_web._textarea_value`` drops
+    it: an HTML parser swallows one immediately after the open tag, so a template that ever
+    grows one must not silently change what this function says was drafted.
+    """
+    (textarea,) = section.css("textarea")
+    text = textarea.text()
+    return text[1:] if text.startswith("\n") else text
+
+
+# ------------------------------------------- the order the expanded row leads with (§12 Phase 8)
+
+#: Every ``<h2>`` of the expanded row, in the order SPEC §12 Phase 8 leaves them.
+#:
+#: Written out whole rather than as the one pair of indices that changed, because the whole list
+#: is what a reader meets and the two sections that moved are only meaningful against the six
+#: that did not. Phase 4 left this order with "Open roles" fourth and "Contacts" fifth; the
+#: inversion is the phase, and the reason is measured: 1 of 1,682 open roles in this database is
+#: part-time, so a row that leads with a roles table leads with the thing that cannot serve the
+#: reason the app exists.
+PANEL_SECTIONS = (
+    "About",
+    "Locations",
+    "Funding",
+    "How to reach them",
+    "Contacts",
+    "Open roles",
+    "Provenance",
+    "Your notes",
+)
+
+
+def panel_headings(markup: str) -> list[str]:
+    """The panel's section headings, in document order, without the roles count beside one.
+
+    The count is stripped rather than written into the expected list because it is the one
+    heading whose text depends on the fixture, and what is being asserted here is the order.
+    """
+    headings: list[str] = []
+    for section in HTMLParser(markup).css("section.panel-section"):
+        heading = section.css_first("h2")
+        if heading is None:
+            continue
+        for count in heading.css("span.count"):
+            count.decompose()
+        headings.append(squashed(heading))
+    return headings
+
+
+async def test_the_panel_leads_with_a_human_and_not_with_the_roles_table(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """SPEC §12 Phase 8's reordering, asserted as the order rather than as two `in` checks.
+
+    A startup does not advertise part-time work; it invents it when a specific person asks. So
+    the two blocks about reaching a human sit above the table of things to apply to, and the
+    roles below them are evidence that there is budget and unmet need. The whole list is pinned
+    because "above" is a relation and only the sequence can express it — a section silently
+    dropped or a ninth one appended is the same failure as one moved.
+
+    Run against both entry points, which is the point of doing it here rather than once: the
+    permalink and the htmx fragment are two handlers sharing one ``_panel_context``, so a
+    reorder that reached only one of them would be invisible to a test that rendered either.
+    """
+    headings = panel_headings(await detail_html(client, detail_url, contacts.rich))
+
+    assert headings == list(PANEL_SECTIONS)
+    assert headings.index("Contacts") < headings.index("Open roles")
+    assert headings.index("How to reach them") < headings.index("Contacts")
+
+
+# ------------------------------------------------- published vs constructed, still (§6, §9)
 
 
 async def test_published_and_constructed_are_two_groups_in_a_fixed_order(
@@ -780,18 +960,126 @@ async def test_an_email_is_a_mailto_and_every_other_value_goes_through_safe_url(
     :func:`web.templating.safe_url` keeps it out of the attribute. It still has to be *shown*
     — SPEC §6 stores what the company published and the panel shows what was stored — so the
     refusal renders as inert text rather than as a silently dropped row.
+
+    The ``mailto:`` half is asserted as the address it would send to rather than as the anchor's
+    whole markup: SPEC §12 Phase 8 made it a button carrying a drafted subject and body, and
+    *what* it drafts is the next test's business. What stays this test's business is that the
+    one scheme ``safe_url`` refuses by design is still the one the email row is built on.
     """
     markup = await detail_html(client, detail_url, contacts.rich)
-    published = group_html(contact_groups(markup), PUBLISHED_HEADING)
+    groups = contact_groups(markup)
+    published = group_html(groups, PUBLISHED_HEADING)
 
-    assert f'<a href="mailto:{CAREERS_EMAIL}">{CAREERS_EMAIL}</a>' in published
-    assert f'<a href="mailto:{HR_EMAIL}">{HR_EMAIL}</a>' in published
+    for address in (CAREERS_EMAIL, HR_EMAIL):
+        (anchor,) = email_row(groups, address).css("a")
+        assert mailto_parts(anchor)[0] == address
     assert (
         f'<a href="{CAREERS_PAGE}" rel="noopener noreferrer" target="_blank">{CAREERS_PAGE}</a>'
     ) in published
 
     assert 'href="javascript:' not in markup.lower()
     assert f'<span class="muted">{HOSTILE_FORM}</span>' in published
+
+
+async def test_a_published_email_is_a_button_carrying_a_drafted_message(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """SPEC §12 Phase 8's email door: the row's primary action, with the pitch already written.
+
+    31 of 9,220 companies here publish an address, so where one exists it is worth more than a
+    small link in a list of six — the button opens a composed draft and the plain address stays
+    beside it, because the button is what you send with and the text is what you copy and what
+    tells you who you are about to write to.
+
+    The drafts are read back out of the URL and compared against ``config/outreach.yaml`` rather
+    than against words written here. That is the rule this phase actually rests on: the pitch is
+    the variable worth iterating on, so it lives in config and a test that spelled it out would
+    make rewriting it a code change — which is exactly what CLAUDE.md's "edit YAML, not Python"
+    rules out. What is pinned is that the panel sends *that* file's subject and body, with the
+    company filled in, inside a URL a mail client will not silently truncate.
+    """
+    outreach = load_outreach_config()
+    groups = contact_groups(await detail_html(client, detail_url, contacts.rich))
+    row = email_row(groups, HR_EMAIL)
+    (anchor,) = row.css("a")
+    address, draft = mailto_parts(anchor)
+
+    assert "button" in (anchor.attributes.get("class") or "").split()
+    assert address == HR_EMAIL
+    assert draft["subject"] == [outreach.email_subject.format(company=RICH_NAME)]
+    assert draft["body"] == [outreach.email_body.format(company=RICH_NAME)]
+    assert len(anchor.attributes.get("href") or "") <= MAILTO_MAX_URL
+
+    # The address is text beside the button, not the button's own label: a row that linked the
+    # address and said nothing else would be the pre-Phase-8 row with a class on it.
+    assert HR_EMAIL in squashed(row)
+    assert HR_EMAIL not in squashed(anchor)
+
+
+async def test_a_shared_inbox_is_marked_a_personal_one_is_not_and_neither_is_hidden(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """SPEC §12 Phase 8's hint, and SPEC §7.1's rule that classification never excludes.
+
+    ``careers@`` is a ticket queue and a scoped personal offer converts close to zero in one, so
+    the reader is told which kind of address they are about to spend a draft on — measured, 8 of
+    the 9 addresses crawled off company sites are queues and 22 of the 25 found in "Who is
+    hiring?" comments are a named person's own. Both halves are asserted, because a hint that
+    appeared on every row would distinguish nothing.
+
+    And then the part that makes it a hint rather than a filter: neither row loses its address
+    or its draft button. §7.1 is about role families, but the rule it states is general, and
+    this is the first classification in the app with an obvious temptation to act on it.
+    """
+    outreach = load_outreach_config()
+    # Stated rather than assumed, so a change to the vocabulary fails here saying what changed
+    # instead of failing below looking like the template stopped rendering the hint. Both halves
+    # are pinned: `careers` has to be a queue for the shared assertion to mean anything, and the
+    # local part of FOUNDER_EMAIL has to *not* be one for the personal assertion to.
+    assert "careers" in outreach.role_address_prefixes
+    assert FOUNDER_EMAIL.partition("@")[0] not in outreach.role_address_prefixes
+
+    shared_groups = contact_groups(await detail_html(client, detail_url, contacts.rich))
+    shared = squashed(email_row(shared_groups, CAREERS_EMAIL))
+    assert "general inbox" in shared and "direct" not in shared
+
+    # A different company, because the two cannot coexist on one: an address that reaches a human
+    # becomes the company's door, and `rich` exists to show a published *profile* winning.
+    direct_groups = contact_groups(await detail_html(client, detail_url, contacts.personal_email))
+    personal = squashed(email_row(direct_groups, FOUNDER_EMAIL))
+    assert "direct" in personal and "general inbox" not in personal
+
+    for groups, address in ((shared_groups, CAREERS_EMAIL), (direct_groups, FOUNDER_EMAIL)):
+        row = email_row(groups, address)
+        (anchor,) = row.css("a")
+        assert mailto_parts(anchor)[0] == address, address
+        assert address in squashed(row), address
+
+
+async def test_an_address_that_reaches_a_person_outranks_even_a_published_profile(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """The door ranking's top tier, and the one place email beats LinkedIn (SPEC §12 Phase 8).
+
+    Direct Labs published both a personal address and a profile URL. Email wins: there is no
+    300-character cap on it, it needs no connection request, and the address was published by
+    somebody expecting to be written to. So the door is a composed ``mailto:`` and there is no
+    connection-note box under it — that draft travels inside the URL and there is nothing to
+    paste.
+
+    The mirror of this is ``rich``, whose only addresses are queues and whose door is therefore
+    the profile: a scoped personal offer sent to ``careers@`` converts close to nothing, which is
+    why a shared inbox is ranked *below* a named human rather than above one.
+    """
+    section = outreach_section(await detail_html(client, detail_url, contacts.personal_email))
+    button = door_button(section)
+
+    assert squashed(button) == "Draft an email →"
+    assert mailto_parts(button)[0] == FOUNDER_EMAIL
+    assert "direct" in squashed(section)
+    assert not section.css("textarea"), "an email door carries its draft in the URL"
+    # The profile is still published and still rendered below; it simply is not the door.
+    assert DIRECT_PROFILE_URL not in (button.attributes.get("href") or "")
 
 
 async def test_a_company_with_no_contacts_at_all_still_renders(
@@ -909,6 +1197,292 @@ async def test_the_contacts_block_is_identical_on_the_permalink_and_the_fragment
     assert block == contact_section(fragment.text).html
     assert block is not None
     assert PUBLISHED_HEADING in block and CONSTRUCTED_HEADING in block
+
+
+# ------------------------------------------------ the door the panel offers (§6, §12 Phase 8)
+
+#: Two of the three tiers already have a company above: ``rich`` published somebody's profile
+#: URL and ``quiet`` names somebody who has none. These are the shapes those two cannot show.
+NOBODY_NAME = "Nobody Labs"
+#: The company-wide search SPEC §6 stores for every named company — the third tier's whole door.
+NOBODY_PEOPLE_SEARCH = (
+    "https://www.linkedin.com/search/results/people/?keywords=%22Nobody+Labs%22+"
+    "%28founder+OR+recruiter+OR+%22head+of+engineering%22+OR+%22talent%22%29"
+)
+FILED_NAME = "Ledger Works"
+FILED_PEOPLE_SEARCH = (
+    "https://www.linkedin.com/search/results/people/?keywords=%22Ledger+Works%22+"
+    "%28founder+OR+recruiter+OR+%22head+of+engineering%22+OR+%22talent%22%29"
+)
+FILED_PERSON = "Priya Raman"
+#: What an SEC Form D "related persons" list actually files a fund under, leading full stop and
+#: all, stored with ``role_type=founder`` because that is what the filing calls it. The panel
+#: must never draft "Hi <fund>, I'm a student" — see ``config/outreach.yaml``'s entity markers.
+FORM_D_ENTITY = ". Northwind Real Estate Debt Fund GP LLC"
+#: The same name without the punctuation the leading full stop puts in front of it, so a
+#: substring assertion is about the entity rather than about how a stray "." collapses.
+ENTITY_WORDS = "Northwind Real Estate Debt Fund GP LLC"
+#: Deliberately absurd, and the only reason it exists: the shipped note renders to about 250
+#: characters for a short company name, so a name this long is what proves the 300-character cap
+#: is enforced on the rendered draft rather than only on the template at load time.
+OVERLONG_NAME = ("Northwind " + "Advanced Robotics and Automation Systems " * 3).strip()
+OVERLONG_PERSON = "Ada Vance"
+#: One company name per character class that would otherwise break a ``mailto:`` instead of
+#: travelling inside it: ``&`` starts a query parameter, ``"`` closes the attribute, and a
+#: non-ASCII letter is not a byte a URL may carry at all.
+PUNCTUATED_NAME = 'Ampersand & Söhne "Labs"'
+PUNCTUATED_EMAIL = "ada@ampersand-soehne.example"
+
+
+@dataclass(frozen=True, slots=True)
+class DoorFixture:
+    """Four companies, one per thing SPEC §12 Phase 8 has to get right that ``contacts`` cannot.
+
+    ``nameless`` has a people search and nobody named, which is the third tier; ``filed`` has an
+    EDGAR filing entity ranked above a real human, which is the guard; ``overlong`` has a name
+    long enough to overrun the connection-note cap; ``punctuated`` has a name that has to survive
+    percent-encoding into a ``mailto:``.
+    """
+
+    nameless: int
+    filed: int
+    overlong: int
+    punctuated: int
+
+
+@pytest.fixture
+async def doors(session: AsyncSession) -> DoorFixture:
+    """The four companies above, each carrying only what its own tier needs."""
+    nameless = await make_company(session, NOBODY_NAME, domain="nobody-labs.example")
+    await make_contact(
+        session,
+        nameless,
+        kind=enums.ContactKind.LINKEDIN_PEOPLE,
+        value=NOBODY_PEOPLE_SEARCH,
+        confidence=enums.ContactConfidence.CONSTRUCTED,
+    )
+
+    filed = await make_company(session, FILED_NAME, domain="ledger-works.example")
+    await make_contact(
+        session,
+        filed,
+        kind=enums.ContactKind.LINKEDIN_PEOPLE,
+        value=FILED_PEOPLE_SEARCH,
+        confidence=enums.ContactConfidence.CONSTRUCTED,
+    )
+    # Inserted first and classified `founder`, so it outranks the human on both keys
+    # `web.routes.companies._people_worth_messaging` sorts by: with the guard removed, this is
+    # the "person" the panel would offer, and the company still has a third-tier door to fall
+    # back to, so a guard that skipped everybody would be told apart from one that works.
+    await make_person(session, filed.id, FORM_D_ENTITY, role_type=enums.RoleType.FOUNDER)
+    await make_person(session, filed.id, FILED_PERSON, title="Operations lead")
+
+    overlong = await make_company(session, OVERLONG_NAME, domain="northwind-advanced.example")
+    await make_person(session, overlong.id, OVERLONG_PERSON, title="Founder")
+
+    punctuated = await make_company(session, PUNCTUATED_NAME, domain="ampersand-soehne.example")
+    await make_contact(
+        session,
+        punctuated,
+        kind=enums.ContactKind.EMAIL,
+        value=PUNCTUATED_EMAIL,
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    await session.commit()
+    return DoorFixture(
+        nameless=nameless.id,
+        filed=filed.id,
+        overlong=overlong.id,
+        punctuated=punctuated.id,
+    )
+
+
+async def test_a_published_profile_is_the_door_the_panel_offers(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """Tier 1: 69 people in this database carry a profile URL, and it beats any search.
+
+    The URL is one the company published on its own team page — SPEC §4 excludes LinkedIn from
+    the connectors and SPEC §6 forbids constructing a profile link, so a stored one is always
+    somebody's own. The block names them and their title, because who you are writing to is the
+    decision the reader is being asked to make.
+
+    The last two assertions are the tier's boundary rather than decoration: the company-wide
+    search is still stored on this company and still rendered in the contacts block below, so a
+    door-picker that fell through to it would produce a page that *looks* right, and "ask for a
+    founder" printed next to a door that already names the founder is the same mistake read
+    from the other end.
+    """
+    section = outreach_section(await detail_html(client, detail_url, contacts.rich))
+    text = squashed(section)
+    button = door_button(section)
+
+    assert button.attributes.get("href") == PROFILE_URL
+    assert squashed(button) == "Open their profile →"
+    assert "Ben Bloom" in text
+    assert "CEO & Founder" in text
+    assert PEOPLE_SEARCH not in (section.html or "")
+    assert "Ask for" not in text
+
+
+async def test_a_named_person_with_no_profile_gets_a_search_scoped_to_them(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """Tier 2: 4,946 companies name somebody and only 69 people carry a URL, so this is the bulk.
+
+    A search for the person *and* the company lands on one profile; the company-wide search
+    lands on a list to triage, and the two are one keyword apart in the URL and worlds apart in
+    what the reader has to do next. Both halves of the keyword expression are asserted, and so
+    is the fact that the result is not the search already stored on this company — which is the
+    only way to tell a scoped search from the fallback dressed in the person's name.
+    """
+    section = outreach_section(await detail_html(client, detail_url, contacts.shortcuts_only))
+    button = door_button(section)
+    href = button.attributes.get("href") or ""
+    (keywords,) = parse_qs(urlsplit(href).query)["keywords"]
+
+    assert squashed(button) == "Find Sam Okafor →"
+    assert "Sam Okafor" in keywords
+    assert QUIET_NAME in keywords
+    assert href != QUIET_PEOPLE_SEARCH
+    assert "Head of Operations" in squashed(section)
+
+
+async def test_nobody_named_gets_the_company_wide_search_and_who_to_ask_for(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """Tier 3: the door every company has, now carrying the guidance it never used to.
+
+    The URL is read off the stored ``linkedin_people`` contact rather than rebuilt, so the
+    button here and the link in the contacts block below are the same search by construction —
+    two search expressions for one company would be two different lists of people.
+
+    The roles to ask for are rendered in ``contact_priority``'s own order. Asserted against the
+    loaded config rather than against a list written here, because the order is a decision that
+    is meant to be changed in ``config/outreach.yaml`` alone (CLAUDE.md: edit YAML, not Python);
+    what the panel owes is to print that file's order, whatever it currently says.
+    """
+    outreach = load_outreach_config()
+    section = outreach_section(await detail_html(client, detail_url, doors.nameless))
+    button = door_button(section)
+    expected = ", ".join(label_for(role) for role in outreach.contact_priority)
+
+    assert button.attributes.get("href") == NOBODY_PEOPLE_SEARCH
+    assert squashed(button) == "Find people →"
+    assert f"Ask for, best first: {expected}." in squashed(section)
+
+
+async def test_a_company_with_nobody_named_and_no_search_says_there_is_no_door(
+    client: httpx.AsyncClient, contacts: ContactFixture, detail_url: Callable[[int], str]
+) -> None:
+    """The state every company is in the day it is seeded, and the block must not invent a door.
+
+    A search built for a company whose name we do not have is a link to somebody else's
+    company, and a draft with nowhere to paste it is worse than an empty section — so what
+    renders is a sentence saying so, with no control and no textarea to fill in.
+    """
+    section = outreach_section(await detail_html(client, detail_url, contacts.silent))
+
+    assert "No door on file" in squashed(section)
+    assert section.css("a") == []
+    assert section.css("textarea") == []
+
+
+async def test_a_filing_entity_is_never_offered_as_someone_to_message(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """SPEC §12 Phase 8's entity guard: a Form D "related person" may be a fund, not a human.
+
+    EDGAR files names like the one in :data:`FORM_D_ENTITY` in a related-persons list, and the
+    ingest side stores them as founders because that is what the filing calls them. Ranked
+    first by ``contact_priority`` and inserted first, this one wins every tiebreak the door
+    picker has — so a panel that drafts "Hi <fund>, I'm a Stanford student" is one deleted
+    marker away, and the human filed behind it is the only thing that proves the guard skipped
+    rather than emptied.
+
+    Skipped as a *door*, though, and not deleted: SPEC §7.1's rule that classification never
+    excludes applies to the stored row, which still appears in the contacts block's people list
+    — the panel shows what was stored (§6) and simply declines to write to it.
+    """
+    markup = await detail_html(client, detail_url, doors.filed)
+    section = outreach_section(markup)
+    text = squashed(section)
+
+    assert squashed(door_button(section)) == f"Find {FILED_PERSON} →"
+    assert FILED_PERSON in text
+    assert ENTITY_WORDS not in text
+    assert ENTITY_WORDS not in (section.html or "")
+    assert ENTITY_WORDS in squashed(contact_section(markup))
+
+
+async def test_every_drafted_note_fits_a_connection_request(
+    client: httpx.AsyncClient,
+    contacts: ContactFixture,
+    doors: DoorFixture,
+    detail_url: Callable[[int], str],
+) -> None:
+    """300 characters is LinkedIn's cap, and a draft one character over cannot be sent at all.
+
+    Not "is usually short enough": LinkedIn refuses an over-long connection note rather than
+    truncating it, so an unclamped draft shuts the door this whole tier exists to open. Asserted
+    over every shape that renders one, because the cut lives in one helper and each tier reaches
+    it with a different pair of names.
+
+    The count beside the box has to agree with the box, since it is what an *edited* draft is
+    kept legal by — a stale number is a reader confidently pasting something that will not send.
+
+    The last two assertions are the ones that could fail today: a short company name renders the
+    configured draft untouched, and the absurd one is cut on a word boundary and marked, so the
+    sender sees that it was cut instead of discovering it in the reply.
+    """
+    outreach = load_outreach_config()
+    everyone = (
+        contacts.rich,
+        contacts.shortcuts_only,
+        doors.nameless,
+        doors.filed,
+        doors.overlong,
+    )
+    for company_id in everyone:
+        section = outreach_section(await detail_html(client, detail_url, company_id))
+        note = drafted_note(section)
+        assert 0 < len(note) <= LINKEDIN_NOTE_LIMIT, (company_id, len(note))
+        assert f"{len(note)} of {LINKEDIN_NOTE_LIMIT} characters" in squashed(section)
+
+    rich = outreach_section(await detail_html(client, detail_url, contacts.rich))
+    assert drafted_note(rich) == outreach.linkedin_note.format(
+        company=RICH_NAME, person="Ben Bloom"
+    )
+
+    unclamped = outreach.linkedin_note.format(company=OVERLONG_NAME, person=OVERLONG_PERSON)
+    assert len(unclamped) > LINKEDIN_NOTE_LIMIT, "the overlong fixture no longer overruns the cap"
+    overlong = outreach_section(await detail_html(client, detail_url, doors.overlong))
+    assert drafted_note(overlong).endswith("…")
+
+
+async def test_a_company_name_full_of_punctuation_survives_into_the_mailto(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """The draft is a URL, and three characters in a company name are what a URL is made of.
+
+    An unencoded ``&`` in the subject does not corrupt the draft, it *ends* it — everything
+    after it is read as another URL parameter, which is the same class of injection
+    :func:`web.templating.safe_url` exists for, arriving through the one link that cannot use
+    it. So the assertions are made in both directions: the encoded form is what travels, and
+    what comes back out of the URL is the name as stored, byte for byte.
+    """
+    outreach = load_outreach_config()
+    groups = contact_groups(await detail_html(client, detail_url, doors.punctuated))
+    (anchor,) = email_row(groups, PUNCTUATED_EMAIL).css("a")
+    href = anchor.attributes.get("href") or ""
+    address, draft = mailto_parts(anchor)
+
+    assert address == PUNCTUATED_EMAIL
+    assert draft["subject"] == [outreach.email_subject.format(company=PUNCTUATED_NAME)]
+    assert draft["body"] == [outreach.email_body.format(company=PUNCTUATED_NAME)]
+    assert "%26" in href and "%22" in href and "%C3%B6" in href
+    # Exactly one ampersand left in the whole URL: the separator this function wrote itself.
+    assert href.count("&") == 1
 
 
 # ------------------------------------------------- a cursor key the driver cannot bind (§9)

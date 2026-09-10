@@ -1,6 +1,13 @@
-"""Loaders for ``config/connectors.yaml`` and ``config/regions.yaml`` (SPEC §7.2, §11).
+"""Loaders for ``config/connectors.yaml``, ``config/regions.yaml`` and ``config/outreach.yaml``
+(SPEC §7.2, §11, §12 Phase 8).
 
 * ``connectors.yaml`` is the only place a schedule (cron cadence) or a rate limit is defined.
+* ``outreach.yaml`` is the only place the outreach drafts live (SPEC §6, §12 Phase 8): the
+  email subject and body, the LinkedIn connection note, the order the panel suggests people in,
+  and the two lists that tell a shared inbox from a person and a legal entity from a human. The
+  pitch is the thing most worth rewriting, so it is config and not code, and this module is
+  where a rewrite that cannot be sent — an unknown placeholder, a note past LinkedIn's
+  300-character cap — fails on load instead of inside a request handler.
 * ``regions.yaml`` is the only place region-specific logic may live (SPEC §11, §12 Phase 7):
   the metros, their city lists, the ``metro`` label that lands on ``Location.metro``, the state
   each city sits in and how that state's name is written out, and the other spellings a source
@@ -8,7 +15,7 @@
   deriving them from the file is what lets a metro be added, or a source's spelling of one
   recognised, by editing YAML alone.
 
-Both files are validated with Pydantic on load so a typo fails fast with a path to the field.
+Every file here is validated with Pydantic on load so a typo fails fast with a path to the field.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
+from string import Formatter
 from typing import Any, NamedTuple
 
 import yaml
@@ -29,10 +37,13 @@ from pydantic import (
     model_validator,
 )
 
+from db import enums
+
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 CONNECTORS_YAML = CONFIG_DIR / "connectors.yaml"
 REGIONS_YAML = CONFIG_DIR / "regions.yaml"
+OUTREACH_YAML = CONFIG_DIR / "outreach.yaml"
 
 #: Connectors with a block in ``config/connectors.yaml`` but no implementation yet (SPEC §4
 #: Tier 2 #6, #7). They are still configured, still listed by ``/runs`` and ``cli.py stats``,
@@ -590,6 +601,252 @@ class RegionsConfig(BaseModel):
         )
 
 
+#: LinkedIn's cap on the note attached to a connection request (SPEC §12 Phase 8). A draft one
+#: character over is not a slightly long draft: LinkedIn refuses to send it, so the door this
+#: whole tier exists to open is shut at the moment of use.
+LINKEDIN_NOTE_LIMIT = 300
+
+#: The pair of names the LinkedIn note is measured against on load. A template has no length
+#: until its placeholders are filled, and the file cannot be checked against every company in
+#: the database, so it is checked against one representative pair: a two-word company name and
+#: a full personal name, both at the long end of what a corpus of small startups holds. This is
+#: a budget check and not a guarantee — a longer real name still has to be clamped by whatever
+#: renders the note — and what it buys is that a template fitting *nobody* fails here, where the
+#: message can name the key and the overshoot, rather than at the moment of pasting.
+_SAMPLE_COMPANY = "Northwind Robotics"
+_SAMPLE_PERSON = "Alexandra Fitzgerald"
+
+#: The placeholders each template may use. An email draft is built from a company row alone, so
+#: it has nobody to name; a LinkedIn note is drafted for one person and may name both.
+_EMAIL_PLACEHOLDERS = frozenset({"company"})
+_LINKEDIN_PLACEHOLDERS = frozenset({"company", "person"})
+
+#: How ``outreach.yaml``'s nested blocks map onto :class:`OutreachConfig`'s flat fields — see
+#: :meth:`OutreachConfig._flatten_template_blocks`.
+_TEMPLATE_BLOCKS = {
+    "email": {"subject": "email_subject", "body": "email_body"},
+    "linkedin": {"note": "linkedin_note"},
+}
+
+#: The same mapping read the other way, so a failure can quote the key the *file* spells rather
+#: than the field the model calls it. Every other message about a template already says
+#: ``email.subject``; a reader who is told ``email_subject`` has to translate before they can find
+#: the line to edit, and there is no reason to make them.
+_FILE_KEY_FOR_FIELD = {
+    field: f"{block}.{key}"
+    for block, keys in _TEMPLATE_BLOCKS.items()
+    for key, field in keys.items()
+}
+
+
+def _placeholders(template: str, field: str) -> frozenset[str]:
+    """The ``{name}`` fields ``template`` uses; ``ValueError`` naming ``field`` if it is not a
+    template :meth:`str.format` could render.
+
+    Parsed with :class:`string.Formatter` rather than matched with a regular expression, because
+    that is the parser ``format`` itself will use at render time: a doubled ``{{`` is literal
+    text to both, and an unmatched brace raises here instead of in a request handler. Positional
+    fields (``{}``, ``{0}``) are rejected outright rather than reported as unknown names — the
+    panel formats by keyword only, so a positional field is an ``IndexError`` waiting for the
+    first company it is rendered for, and its "name" is not something a message can quote.
+    """
+    try:
+        parsed = tuple(Formatter().parse(template))
+    except ValueError as exc:  # a stray '{' or '}' in the file
+        msg = f"{field} is not a valid template: {exc}"
+        raise ValueError(msg) from exc
+    names: set[str] = set()
+    for _text, name, _spec, _conversion in parsed:
+        if name is None:  # trailing literal text, no field
+            continue
+        if not name or name.isdigit():
+            msg = (
+                f"{field} uses the positional placeholder {'{' + name + '}'}; "
+                "placeholders are filled in by name, so write them by name"
+            )
+            raise ValueError(msg)
+        names.add(name)
+    return frozenset(names)
+
+
+class OutreachConfig(BaseModel):
+    """``config/outreach.yaml``: the drafts the company panel offers, and the two lists that
+    decide who it offers them to (SPEC §6, §12 Phase 8).
+
+    The file nests (``email:`` with ``subject`` and ``body``) because that is how the pitch reads
+    as a document; the model is flat because ``email_subject`` is the name the templating filters
+    and the panel's door-picker are written against. :meth:`_flatten_template_blocks` is the
+    whole of that translation, and it is the only place the two shapes are related.
+
+    Nothing here has a default. A pitch, a priority order or a guard list carried in Python would
+    be a second place the behaviour is defined — the one nobody thinks to edit — which is the
+    same mistake CLAUDE.md rules out for classifier keywords. An omitted key fails on load; the
+    two guard lists may be written empty, which switches their guard off in the open.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: Subject line of the ``mailto:`` draft (``{company}``).
+    email_subject: str
+    #: Body of the same draft (``{company}``). Kept short in the shipped file because the whole
+    #: ``mailto:`` URL is percent-encoded and mail clients truncate a long one.
+    email_body: str
+    #: The connection-request note (``{company}``, ``{person}``), held to
+    #: :data:`LINKEDIN_NOTE_LIMIT` characters once filled in.
+    linkedin_note: str
+    #: Who to ask for, best door first. Typed as the enum so a value that is not a
+    #: ``Person.role_type`` fails on load naming the permitted set, and because a
+    #: :class:`~enum.StrEnum` member still compares and hashes as its own string, a caller may
+    #: match it against either a stored ``role_type`` or a plain string.
+    contact_priority: tuple[enums.RoleType, ...] = Field(min_length=1)
+    #: Local parts that mark an address as a shared inbox rather than a person's own. A set:
+    #: membership is the only question ever asked of it, and order would mean nothing.
+    role_address_prefixes: frozenset[str]
+    #: Words that prove a stored "person" is a legal entity — an SEC Form D related-persons list
+    #: yields fund and partnership names classified as founders, and the panel must never draft
+    #: a note to one. A tuple, because a caller scans them in file order.
+    entity_markers: tuple[str, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_template_blocks(cls, data: Any) -> Any:
+        """Fold the file's ``email:`` and ``linkedin:`` blocks into the flat template fields.
+
+        Unknown sub-keys are rejected here by hand because ``extra="forbid"`` cannot see inside a
+        block this validator has already consumed: left alone, ``email: {subjekt: ...}`` would
+        fail as "email_subject: Field required", naming a key the file does not contain and
+        sending the reader looking for the wrong thing. Naming ``email.subjekt`` is the whole
+        point of validating on load.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for block, keys in _TEMPLATE_BLOCKS.items():
+            nested = data.pop(block, None)
+            if nested is None:
+                continue
+            if not isinstance(nested, dict):
+                msg = f"{block} must be a mapping of {', '.join(keys)}, got {nested!r}"
+                raise ValueError(msg)
+            for key, value in nested.items():
+                field = keys.get(key)
+                if field is None:
+                    msg = f"unknown key {block}.{key}; {block} takes: {', '.join(sorted(keys))}"
+                    raise ValueError(msg)
+                data[field] = value
+        return data
+
+    @field_validator("email_subject", "email_body", "linkedin_note")
+    @classmethod
+    def _non_blank(cls, value: str, info: ValidationInfo) -> str:
+        """Trimmed, and required to say something.
+
+        The trim is what makes the length check below honest. A block scalar written ``|``
+        instead of ``|-`` keeps a trailing newline and a quoted string keeps whatever padding
+        was typed around it; neither is text anyone reads, and both count against LinkedIn's
+        300. Blank is the other half: an empty subject or note is a draft that ships as a door
+        with nothing written on it.
+
+        The failure names the key as the file writes it (:data:`_FILE_KEY_FOR_FIELD`), because
+        that is the line the reader has to go and fix.
+        """
+        field = info.field_name or ""
+        return _require_text(value, _FILE_KEY_FOR_FIELD.get(field, field))
+
+    @field_validator("contact_priority")
+    @classmethod
+    def _each_role_at_most_once(
+        cls, value: tuple[enums.RoleType, ...]
+    ) -> tuple[enums.RoleType, ...]:
+        """A role may be listed once. The list is an order, so a second mention can never be
+        reached, and a repeat is always a typo for a role that was meant to be there instead —
+        silently ignoring it would leave that role's people unreachable in the panel."""
+        seen: set[enums.RoleType] = set()
+        for role in value:
+            if role in seen:
+                msg = f"contact_priority lists {role.value!r} twice; it is an order, not a set"
+                raise ValueError(msg)
+            seen.add(role)
+        return value
+
+    @field_validator("role_address_prefixes")
+    @classmethod
+    def _bare_local_parts(cls, value: frozenset[str]) -> frozenset[str]:
+        """Each prefix trimmed and case-folded, and required to be a local part on its own.
+
+        ``info@`` is how this is mistyped, and the failure it causes is invisible: a prefix is
+        compared against the text before the ``@`` of an already-lower-cased address, so a stored
+        ``@`` or a stray capital simply never matches, and the shared-inbox hint quietly stops
+        appearing for that one prefix. A hint that is missing looks exactly like a hint that was
+        not warranted, so the mistake is caught here instead. Case is folded rather than
+        rejected, since only the ``@`` is a real error.
+        """
+        cleaned: set[str] = set()
+        for prefix in value:
+            text = _require_text(prefix, "role_address_prefixes").casefold()
+            if "@" in text or any(character.isspace() for character in text):
+                msg = (
+                    f"role address prefix {prefix!r} must be the local part on its own, "
+                    "without an @ or whitespace"
+                )
+                raise ValueError(msg)
+            cleaned.add(text)
+        return frozenset(cleaned)
+
+    @field_validator("entity_markers")
+    @classmethod
+    def _non_blank_markers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Each marker trimmed and required to be non-empty.
+
+        Blank is the part that matters: an empty marker is contained in every name, so every
+        named person in the database would be read as a legal entity and every company would
+        fall back to the company-wide search — the guard would silently delete the two tiers it
+        exists to protect.
+        """
+        return tuple(_require_text(marker, "entity_markers") for marker in value)
+
+    @model_validator(mode="after")
+    def _reject_undraftable_templates(self) -> OutreachConfig:
+        """Two rules a pitch file must satisfy, checked once on load rather than once per render.
+
+        *Every placeholder is one the renderer will fill.* ``str.format`` raises ``KeyError`` for
+        a name it was not given, and the only place these templates are ever formatted is while
+        serving a page — so ``{firstname}`` written for ``{person}`` would turn one expanded
+        company row into a 500 rather than into an obviously wrong draft. The vocabulary is short
+        and fixed, so the honest place to catch the typo is here, naming both the key and the
+        placeholder.
+
+        *The LinkedIn note fits.* 300 characters is LinkedIn's cap on a connection-request note
+        and it is measured on the note as sent, so a template is only as short as its filled-in
+        form; it is measured here against :data:`_SAMPLE_COMPANY` and :data:`_SAMPLE_PERSON`. The
+        message gives the overshoot, because "too long" without a number means editing and
+        reloading until it stops failing.
+        """
+        for field, template, allowed in (
+            ("email.subject", self.email_subject, _EMAIL_PLACEHOLDERS),
+            ("email.body", self.email_body, _EMAIL_PLACEHOLDERS),
+            ("linkedin.note", self.linkedin_note, _LINKEDIN_PLACEHOLDERS),
+        ):
+            unknown = _placeholders(template, field) - allowed
+            if unknown:
+                offered = ", ".join(sorted(f"{{{name}}}" for name in allowed))
+                named = ", ".join(sorted(f"{{{name}}}" for name in unknown))
+                msg = f"{field} uses {named}, which nothing fills in; it may use: {offered}"
+                raise ValueError(msg)
+
+        drafted = self.linkedin_note.format(company=_SAMPLE_COMPANY, person=_SAMPLE_PERSON)
+        if len(drafted) > LINKEDIN_NOTE_LIMIT:
+            over = len(drafted) - LINKEDIN_NOTE_LIMIT
+            msg = (
+                f"linkedin.note is {over} character{'' if over == 1 else 's'} too long: it "
+                f"renders to {len(drafted)} characters for a company named {_SAMPLE_COMPANY!r} "
+                f"and a person named {_SAMPLE_PERSON!r}, and LinkedIn caps a connection-request "
+                f"note at {LINKEDIN_NOTE_LIMIT}"
+            )
+            raise ValueError(msg)
+        return self
+
+
 def _load_yaml(path: Path) -> Any:
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -609,3 +866,18 @@ def load_regions_config(path: Path = REGIONS_YAML) -> RegionsConfig:
     alternate-config tests — needs a unique path each time, or ``cache_clear()``.
     """
     return RegionsConfig.model_validate(_load_yaml(path))
+
+
+@cache
+def load_outreach_config(path: Path = OUTREACH_YAML) -> OutreachConfig:
+    """Parse and validate the outreach pitch (SPEC §6, §12 Phase 8). Cached on ``path`` like the
+    two loaders above, and the cache earns more here than for either of them: this file is read
+    while rendering a company row, so without it every expanded row would re-read and re-validate
+    YAML inside a request handler.
+
+    The cache is keyed on the path only, so a caller loading a *different* file per case needs a
+    unique path each time, or ``cache_clear()``. Editing the shipped file therefore takes effect
+    on the next process start, not on the next page load — the pitch is iterated between sessions
+    of writing, and a per-request stat is not worth paying on every row.
+    """
+    return OutreachConfig.model_validate(_load_yaml(path))

@@ -263,14 +263,16 @@ Server-rendered, HTMX-enhanced, four pages. Deliberately plain styling.
   - Seniority (multi-select)
   - `flexible_signal` only (off by default)
   - Has open roles (boolean)
+  - Has a published email (boolean) — narrows the list to companies with a published address
   - Tracking status
 - **Default sort: `latest_job_posted_at DESC NULLS LAST`** — companies that posted most recently float to the top. Other sort options: last funding date, amount raised, recently added, open role count, name.
 - **Results:** one collapsed row per company showing name, HQ city, sector chips, latest round + date, open role count, and a compact breakdown of which role families are open. Expanding the row (HTMX `hx-get` into a `<details>`) loads:
   - Thesis / description
   - All locations
   - Funding history table (round, amount, date, investors)
-  - **Full open-roles table** — title, role family, employment type, seniority, location, posted date, link — sortable and filterable within the row, showing *all* roles regardless of the page-level role filter, with matching ones highlighted
+  - **How to reach them** (§12 Phase 8) — the best available door, with a draft: a published email, else a known LinkedIn profile, else a people search scoped to a named person, else the company-wide search with who to ask for
   - Contacts block — published emails, careers page, LinkedIn company link, "Find people →", with published/constructed clearly labeled
+  - **Full open-roles table** — title, role family, employment type, seniority, location, posted date, link — sortable and filterable within the row, showing *all* roles regardless of the page-level role filter, with matching ones highlighted
   - Provenance line: which connectors saw this and when
   - Inline note + status + rating control (HTMX POST to `/company/{id}/note`)
 - Pagination, 50 per page, keyset-based on the sort column.
@@ -470,6 +472,10 @@ Build in this order. Each phase ends with a working, committed, testable state. 
 ### Phase 7 — Multi-region expansion (later)
 
 > Generalize `config/regions.yaml` to multiple metros, add a region selector to the UI, and verify no Bay-Area-specific logic exists outside that config file.
+
+### Phase 8 — Outreach
+
+> Turn the job board into an outreach tool: one part-time posting in 1,682 open roles is not a gap in the data — startups create part-time work for the person who asks, they do not advertise it. Move the contacts block of §9's expanded row above the open-roles table — reaching a human is the point, and the roles are now evidence of budget and unmet need rather than things to apply to — and give every company the best available door. A published email becomes the row's primary action: a `mailto:` built server-side from a subject and body drafted in a new `config/outreach.yaml`, loaded like every other config file, with the address itself still shown beside it and a role inbox (`info`, `jobs`, `support`) quietly marked as one rather than hidden, per §7.1. Only 31 of 9,220 companies have an address, so the LinkedIn door is the main path and gets the design attention, in three tiers: a stored profile URL links straight to the person; a named person without one gets §6's people search scoped to their name and the company; nobody named falls back to today's company-wide "Find people →", now saying who to look for. Ask for a founder first, then exec, eng lead, recruiter last — these companies are too small to have a talent function, and only a founder can invent a role that does not exist. That order, the pitch itself, and the legal-entity markers that stop an EDGAR Form D filer being offered as a person all live in `config/outreach.yaml`; every door carries a pasteable draft within LinkedIn's 300-character cap on a connection note, enforced when the config loads so an unpastable template fails on startup rather than at render time. Nothing here fetches LinkedIn — the search links are the constructed ones §6 already prescribes and a draft you paste yourself is not automation, so §4 stands untouched. Add §9's has-a-published-email filter as an `EXISTS` arm in `db/queries.py`, since a join to a many-per-company table would duplicate rows and break the keyset order, and wire it into both `/` and `/roles`. Then raise `hn_hiring`'s per-run thread cap so it reads years of monthly threads instead of one: that thread is where founders publish their own addresses, and it is what takes the emailable population from 31 into the low hundreds. Do not raise `company_site`'s per-run cap chasing the same end — it yields role inboxes.
 
 ---
 

@@ -71,7 +71,15 @@ def regions() -> RegionsConfig:
 
 @pytest.fixture
 def connector(regions: RegionsConfig) -> HnHiringConnector:
-    return HnHiringConnector(connector_config("hn_hiring"), regions)
+    """The connector, pinned to ONE thread whatever ``config/connectors.yaml`` ships.
+
+    Every fetch test below mocks one thread and its comments, so reading the shipped value would
+    make them fail the day that value changes — which it did, when SPEC §12 Phase 8 raised it so a
+    monthly run missed to a sleeping machine is not lost for good. What the shipped number is is a
+    claim about operations, and ``tests/test_docs.py`` is where that claim is checked against the
+    README; what this file tests is the connector, so it fixes the input it is exercising.
+    """
+    return HnHiringConnector(connector_config("hn_hiring", max_threads=1), regions)
 
 
 @pytest.fixture
@@ -140,7 +148,9 @@ async def test_the_comment_cap_bounds_a_run(
     router: respx.MockRouter, regions: RegionsConfig, client: HttpClient
 ) -> None:
     mock_api(router)
-    connector = HnHiringConnector(connector_config("hn_hiring", max_comments_per_thread=3), regions)
+    connector = HnHiringConnector(
+        connector_config("hn_hiring", max_comments_per_thread=3, max_threads=1), regions
+    )
     assert len(await collect(connector, make_ctx(client))) == 3
 
 

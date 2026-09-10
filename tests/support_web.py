@@ -329,6 +329,16 @@ async def make_contact(
     value: str = "https://example.com/careers",
     confidence: enums.ContactConfidence = enums.ContactConfidence.PUBLISHED,
 ) -> Contact:
+    """One way to reach a company. **Say which ``kind`` and which ``confidence`` you mean.**
+
+    The defaults are a published careers page because that is the harmless contact the panel
+    tests wanted when this factory was written. They stopped being a safe thing to accept
+    silently at SPEC §12 Phase 8: ``Filters.has_published_email`` reads both columns, so a row
+    left on the defaults is neither of the two cases that filter is about — it is not an
+    address, and it is not the constructed link every company carries under SPEC §6. A caller
+    testing reachability that took the defaults would be asserting against a company the filter
+    can only ever exclude, and would pass whatever the predicate did.
+    """
     row = Contact(company_id=company.id, kind=kind, value=value, confidence=confidence)
     session.add(row)
     await session.flush()

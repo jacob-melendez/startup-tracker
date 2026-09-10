@@ -74,7 +74,11 @@ connectors:
     rate_limit: {requests_per_second: 5}
     respect_robots: true            # robots allows /*.json$, which is all this connector fetches
     options:
-      max_threads: 1
+      # Three, not one: the cadence fires at 09:00 UTC and this machine is usually asleep then
+      # (see the README's launchd section), so a missed month would otherwise be lost for good —
+      # the connector reads newest-first and never goes back. Three covers two missed runs. The
+      # one-time backfill of the archive was run at 24; that is an operation, not a setting.
+      max_threads: 3
       max_comments_per_thread: 400
 
   funding_rss:

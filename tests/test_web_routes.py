@@ -42,6 +42,7 @@ from tests.support_web import (
     form_state,
     job_ids,
     make_company,
+    make_contact,
     make_job,
     make_location,
     make_note,
@@ -150,6 +151,27 @@ async def corpus(session: AsyncSession) -> Corpus:
         amount_usd=2_000_000,
         announced_date=date(2015, 1, 1),
         refresh=False,
+    )
+
+    # SPEC §12 Phase 8's "way in", as the two shapes the database really holds. Northstar
+    # published an address on its own pages, so it is one of the few companies you can write to
+    # directly; Quiet carries only the constructed people-search URL SPEC §6 builds for every
+    # company from its name, which is a link to go looking, not somebody's inbox. The pair is
+    # what makes ``has_email=1`` a filter rather than a no-op — a predicate that dropped either
+    # half of ``kind = email AND confidence = published`` would return both of them.
+    await make_contact(
+        session,
+        northstar,
+        kind=enums.ContactKind.EMAIL,
+        value="ada@northstar.example",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    await make_contact(
+        session,
+        quiet,
+        kind=enums.ContactKind.LINKEDIN_PEOPLE,
+        value="https://www.linkedin.com/search/results/people/?keywords=Quiet+Ventures",
+        confidence=enums.ContactConfidence.CONSTRUCTED,
     )
 
     tracked = await make_company(session, "Tracked Labs", stage=enums.Stage.PRE_SEED)
@@ -447,6 +469,11 @@ async def test_load_more_walks_the_whole_list(
         ("seniority=junior", ("tracked",)),
         ("flexible=1", ("northstar",)),
         ("open_roles=1", ("northstar", "tracked")),
+        # SPEC §12 Phase 8. Quiet has a contact row too, so a hit here is the confidence and
+        # kind halves of the predicate doing the work rather than "the only company with any
+        # contact at all"; the emptied parameter is the untouched checkbox, i.e. every company.
+        ("has_email=1", ("northstar",)),
+        ("has_email=", ("northstar", "tracked", "quiet")),
         ("tracking=applied", ("tracked",)),
         ("tracking=none", ("northstar", "quiet")),
         ("sort=name", ("northstar", "quiet", "tracked")),
@@ -480,6 +507,9 @@ async def test_company_filters_round_trip_through_http(
         ("city=San+Jose", ("tracked_data",)),
         ("metro=Bay+Area", ("ns_software", "ns_marketing", "tracked_data")),
         ("metro=New+York", ()),
+        # A company-level filter on the role list: it selects whole companies, so what survives
+        # is every open role of the one company you can write to (SPEC §12 Phase 8).
+        ("has_email=1", ("ns_software", "ns_marketing")),
     ],
 )
 async def test_role_filters_round_trip_through_http(
@@ -719,17 +749,113 @@ async def test_a_closed_role_is_badged_when_it_is_shown(
     assert '<span class="badge closed">Closed</span>' not in (await client.get("/roles")).text
 
 
+# --------------------------------------------- the "way in" filter (SPEC §12 Phase 8)
+
+
+async def test_the_way_in_filter_is_opt_in_and_never_narrows_by_default(
+    client: httpx.AsyncClient, corpus: Corpus
+) -> None:
+    """``has_email`` selects companies you can write to, and only once it is ticked (§7.1).
+
+    Two spellings of "unset" have to mean the same thing as no parameter at all: the absent one
+    a first visit sends, and the ``?has_email=`` a GET form produces for an untouched box —
+    ``web.filters``' second rule, and the one that costs the most if it slips here. Almost no
+    company has a published address (31 of 9,220 when this phase was written), so a box that
+    read a blank value as "false but set", or that came up ticked, would not trim the list: it
+    would empty it, and the reader would be looking at 0.3% of the database believing it is all
+    of it.
+
+    The narrowing is asserted against a corpus where the excluded companies are not simply
+    contactless — Quiet carries a contact row of its own — so what is being pinned is the
+    predicate, not the absence of data.
+    """
+    everything = company_ids((await client.get("/")).text)
+    assert everything == [corpus.northstar, corpus.tracked, corpus.quiet]
+
+    assert company_ids((await client.get("/?has_email=")).text) == everything
+    assert company_ids((await client.get("/?has_email=0")).text) == everything
+    assert company_ids((await client.get("/?has_email=1")).text) == [corpus.northstar]
+
+    # ...and the ticked box comes back ticked, so the next submission from the rendered form is
+    # the same query rather than the unfiltered one.
+    assert form_state((await client.get("/?has_email=1")).text)["has_email"] == ["1"]
+    assert form_state((await client.get("/?has_email=")).text)["has_email"] == []
+
+
+async def test_the_way_in_filter_composes_with_a_region_and_reaches_both_lists(
+    client: httpx.AsyncClient, session: AsyncSession, corpus: Corpus
+) -> None:
+    """One dependency, two pages, and an ``AND`` beside every other filter — SPEC §9.
+
+    ``has_email`` is declared once, in ``web.filters.shared_filters``, and neither route was
+    taught about it; this is the assertion that says so. Had it been added to ``/``'s own
+    dependency instead — the shorter change, and the one a reader of ``companies.py`` alone
+    would make — ``/roles`` would silently ignore a control the shared filter form still
+    renders and still submits to it.
+
+    Composition is checked against Region rather than against another checkbox because the two
+    are the phase's actual query: a part-time offer is made to a small company you can get to,
+    so "reachable" is only useful *within* a metro. The out-of-region company is reachable and
+    the out-of-reach company is in the region, so neither filter can produce this answer alone.
+    """
+    empire = await make_company(session, "Empire Data")
+    await make_location(session, empire, "Brooklyn")
+    # Older than every corpus role, so the role list's default ``posted_at DESC`` puts it last
+    # and the assertion below is about the filter rather than about a tie-break.
+    empire_role = await make_job(
+        session, empire, "Data engineer", posted_at=NOW - 3 * DAY, refresh=False
+    )
+    await make_contact(
+        session,
+        empire,
+        kind=enums.ContactKind.EMAIL,
+        value="grace@empire.example",
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+    await refresh_denormalized(session)
+    await session.commit()
+
+    reachable = await client.get("/?has_email=1")
+    assert set(company_ids(reachable.text)) == {corpus.northstar, empire.id}
+
+    in_region = await client.get("/?has_email=1&metro=New+York")
+    assert company_ids(in_region.text) == [empire.id]
+    # Each half alone is strictly wider, so the conjunction is what did the narrowing: the
+    # region on its own keeps Empire while dropping the reachable Bay Area company, and
+    # reachability on its own keeps both.
+    assert company_ids((await client.get("/?metro=New+York")).text) == [empire.id]
+    assert corpus.northstar in company_ids(reachable.text)
+    assert corpus.northstar not in company_ids(in_region.text)
+
+    # The same filter on the role list, through the same dependency: a company-level predicate,
+    # so what comes back is that company's roles rather than a marked-up subset of them.
+    roles = await client.get("/roles?has_email=1&metro=New+York")
+    assert job_ids(roles.text) == [empire_role.id]
+    assert job_ids((await client.get("/roles?has_email=1")).text) == [
+        corpus.ns_software,
+        corpus.ns_marketing,
+        empire_role.id,
+    ]
+    # ...and both pages re-render the one shared control holding its state (§9's "same filter
+    # set"), so a form submitted from either lands on the same query.
+    assert form_state(in_region.text)["has_email"] == ["1"]
+    assert form_state(roles.text)["has_email"] == ["1"]
+
+
 # ------------------------------------------------------- the filter form's own state (§9)
 
 #: Every §4.4 parameter the company form carries, chosen so the whole set still selects
 #: Northstar: the four role parameters are satisfied by one single role (``ns_software``),
-#: which is what §9's one-EXISTS reading of the role filters demands, and a company with no
-#: ``user_notes`` row is what ``tracking=none`` means.
+#: which is what §9's one-EXISTS reading of the role filters demands, a company with no
+#: ``user_notes`` row is what ``tracking=none`` means, and the published address the corpus
+#: gives Northstar is what ``has_email=1`` (SPEC §12 Phase 8) asks for. This constant is the
+#: closed-set half of the parameter table: a filter added to ``web.filters.shared_filters``
+#: and not to this string is one nothing here ever submits alongside the others.
 EVERY_COMPANY_FILTER = (
     "q=Northstar&city=Oakland&metro=Bay+Area&sector=robotics&stage=series_a&round=series_a"
     "&amount_min=1000000&amount_max=90000000&round_months=12"
     "&family=software&employment=full_time&seniority=senior&flexible=1"
-    "&open_roles=1&tracking=none&sort=name"
+    "&open_roles=1&has_email=1&tracking=none&sort=name"
 )
 
 
@@ -767,6 +893,10 @@ async def test_the_filter_form_re_renders_its_own_active_state(
         "tracking": ["none"],
         "flexible": ["1"],
         "open_roles": ["1"],
+        # A checkbox that came back clear looks identical to one that was never ticked, so the
+        # next click would silently widen the list back to the 9,000-odd companies with no
+        # address — which is the whole database (SPEC §12 Phase 8).
+        "has_email": ["1"],
         "sort": ["name"],
         # `closed` is a /roles control; the company form must not offer it (§4.4).
     }
@@ -826,6 +956,10 @@ async def test_an_unfiltered_page_pre_selects_nothing(
         "tracking": [],
         "flexible": [],
         "open_roles": [],
+        # SPEC §12 Phase 8's box is opt-in like the two above it, and it is the one where a
+        # default-on control would be indefensible: 9,189 of 9,220 companies have no published
+        # address, so a form that shipped this ticked would open on 0.3% of the database.
+        "has_email": [],
     }
 
     assert form_state((await client.get("/")).text) == unset | {"sort": ["recent_job"]}

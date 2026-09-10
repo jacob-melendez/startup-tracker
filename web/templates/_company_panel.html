@@ -1,13 +1,20 @@
 {%- import "_chips.html" as chips -%}
 {#-
-  The expanded company row (SPEC §9), in the order the spec lists it:
+  The expanded company row (SPEC §9), in the order SPEC §12 Phase 8 leaves it:
     1. thesis / description
     2. all locations
     3. funding history (round, amount, date, investors)
-    4. the full open-roles table
+    4. how to reach a human: the best door this company offers, with a draft
     5. contacts, published vs constructed
-    6. provenance line
-    7. the inline note + status + rating control
+    6. the full open-roles table
+    7. provenance line
+    8. the inline note + status + rating control
+
+  Sections 4 and 5 sit above the roles table rather than below it, and that inversion is the
+  whole of Phase 8: 1 of 1,682 open roles in this database is part-time, because a startup does
+  not advertise part-time work — it invents it when a specific person asks. So what the row
+  leads with is a reachable human and a first draft, and the roles below it are evidence that
+  there is budget and unmet need rather than things to apply to.
 
   Two entry points, one template: htmx swaps it into `<div class="panel">` inside a row, and
   `/company/{id}` renders it inline with `standalone=True`, which adds the page heading the
@@ -15,9 +22,10 @@
 
   It reads only relationships the route eager-loads (`funding_rounds -> investor_links ->
   investor`, `location_links -> location`, `sector_links -> sector`, `contacts`, `people`,
-  `source_links`) plus the `jobs`, `contacts` and `note` context keys — `contacts` here being
-  the route's published/constructed split of `company.contacts`, not the relationship of the
-  same name, which section 5 must not read directly. Touching an unloaded relationship
+  `source_links`) plus the `jobs`, `contacts`, `door` and `note` context keys — `contacts` here
+  being the route's published/constructed split of `company.contacts`, not the relationship of
+  the same name, which section 5 must not read directly, and `door` being the route's pick of
+  the best way in, which section 4 must not re-derive. Touching an unloaded relationship
   would emit lazy IO from inside a template on an async session — always a bug, and under
   asyncio an immediate `MissingGreenlet`. Funding rounds arrive newest-first from the route.
 
@@ -127,7 +135,180 @@
   {%- endif %}
 </section>
 
-{#- 4. The full open-roles table ---------------------------------------------------------- #}
+{#- 4. How to reach a human ---------------------------------------------------------------- #}
+{#- SPEC §12 Phase 8's outreach block, and the reason both contact blocks now sit above the
+    roles table. `door` is `web.routes.companies.best_outreach_door`: the most specific of the
+    three doors the stored rows support — a profile the company itself published, a search
+    scoped to one named person, or a search across the whole company — or None when it supports
+    none of them. The three are told apart here in words rather than by a rank, because the
+    reader is the one deciding whether a door is worth a draft, and "a company nobody here is
+    named at" is a different proposition from "here is the founder, by name".
+
+    Nothing in this block fetches anything and nothing is sent for you (SPEC §2, §4): the
+    profile URL is one the company published on its own site, the search URLs are constructed
+    from its name (§6), and the note below is text you paste into a connection request
+    yourself. -#}
+<section class="panel-section">
+  <h2>How to reach them</h2>
+  {%- if door %}
+  {#- The address the company published, with the whole draft already inside the `mailto:`.
+      It outranks every LinkedIn tier when it reaches a person, and is demoted below a named
+      human when it is a shared inbox — so a `direct` badge here means "write to this first"
+      and a `general inbox` one means "this was the best that was published". -#}
+  {%- if door.kind == 'email' %}
+  <p><strong>{{ door.person }}</strong>
+    {%- if door.person | shared_inbox %}
+    <span class="badge constructed">general inbox</span>
+    <span class="muted">&mdash; the only address on file is a shared one, so the draft is worth
+      rewriting before you send it.</span>
+    {%- else %}
+    <span class="badge published">direct</span>
+    <span class="muted">&mdash; a personal address the company published itself.</span>
+    {%- endif %}
+    <a class="button" href="{{ door.url }}">Draft an email →</a></p>
+  {%- elif door.kind == 'profile' %}
+  <p><strong>{{ door.person }}</strong>{% if door.title %} <span class="muted">{{ door.title }}</span>{% endif %}
+    <span class="muted">&mdash; the profile the company published on its own site.</span>
+    {{ chips.external_link(door.url, 'Open their profile →', 'button') }}</p>
+  {%- elif door.kind == 'person_search' %}
+  <p><strong>{{ door.person }}</strong>{% if door.title %} <span class="muted">{{ door.title }}</span>{% endif %}
+    <span class="muted">&mdash; no profile link on file, so this looks for them by name at this
+      company rather than for the company alone.</span>
+    {{ chips.external_link(door.url, 'Find ' ~ door.person ~ ' →', 'button') }}</p>
+  {%- else %}
+  <p><span class="muted">Nobody here is named yet, so this searches the whole company.</span>
+    {{ chips.external_link(door.url, 'Find people →', 'button') }}</p>
+  {#- Founder before recruiter is deliberate and measured, not an oversight: 2 of 17,172 stored
+      people are recruiters, because a company this size has no talent function — and a
+      recruiter fills approved headcount while only a founder can invent a role that does not
+      exist yet. The order is `contact_priority` in config/outreach.yaml, so it changes there. -#}
+  <p class="muted">Ask for, best first: {{ door.looking_for | join(', ') }}.</p>
+  {%- endif %}
+  {#- Editable, and with no copy button beside it: this app ships no JavaScript of its own
+      (SPEC §3, §9), so the control that actually works is one you can select out of. The count
+      is the length of the draft as handed over rather than a live one, for the same reason, and
+      the cap beside it is what an edit has to stay inside — it is LinkedIn's own limit on a
+      connection note (`ingest.config.LINKEDIN_NOTE_LIMIT`, which has already clamped this text),
+      read from there rather than typed here so the label cannot outlive the number, and one
+      character over is refused outright rather than truncated. -#}
+  {#- Only when there is something to paste. An email door carries its draft inside the URL, so
+      the box would be empty furniture under every address. -#}
+  {%- if door.note %}
+  <div class="field draft">
+    <label for="draft-note-{{ company.id }}">Connection note &mdash;
+      {{ door.note | length }} of {{ LINKEDIN_NOTE_LIMIT }} characters</label>
+    <textarea id="draft-note-{{ company.id }}" rows="4">{{ door.note }}</textarea>
+  </div>
+  {%- endif %}
+  {%- else %}
+  <p class="muted">No door on file: nobody here is named and no people search was ever built for
+    this company, so whatever is published below is all there is.</p>
+  {%- endif %}
+</section>
+
+{#- 5. Contacts ---------------------------------------------------------------------------- #}
+{#- One contact row. `linkedin_people` is the odd one out on purpose: SPEC §6 says the UI
+    renders the people search "as a 'Find people →' button", so it gets the control and drops
+    the muted kind prefix that would otherwise print its label twice. Everything else is a
+    labelled value. The confidence badge stays on every row even though the group heading above
+    already says which half this is — §6 asks for the distinction to be obvious, and a badge
+    travels with the row when it is copied, screenshotted or read out of order.
+
+    `company` is passed in rather than read off the surrounding context, the way every macro in
+    `_chips.html` takes what it renders: the email branch needs the company name for the draft
+    it builds, and a macro that reaches for a caller's variable breaks the moment it is called
+    from anywhere else. -#}
+{%- macro contact_row(contact, company) -%}
+<li>
+  {%- if contact.kind == 'linkedin_people' %}
+  {{ chips.external_link(contact.value, 'Find people →', 'button') }}
+  {%- else %}
+  <span class="muted">{{ contact.kind | label }}</span>
+  {%- if contact.kind == 'email' %}
+  {#- The email door (SPEC §12 Phase 8). A published address is the one door that lands directly
+      in somebody's inbox, and 31 of 9,220 companies here have one, so where it exists it is the
+      row's primary action rather than a small link: the button opens a draft already carrying
+      the subject and body from `config/outreach.yaml`, and the address stays beside it as plain
+      text, which is what you copy and what tells you who you are about to write to.
+
+      `mailto_url` is the one href in this app that does not go through `safe_url` — a `mailto:`
+      has no host, so that filter refuses it by design, and widening it to admit this one anchor
+      would re-admit every other scheme on every other link. It percent-encodes the address
+      itself and returns "" for a value that is not one, which is what the guard below tests.
+
+      This comment ends without a trailing `-`: the newline after it is the only whitespace
+      between the kind label and what follows, and stripping it renders "Emailhr@acme.com". #}
+  {% set draft = contact.value | mailto_url(company) %}
+  {%- if draft %}
+  <a class="button" href="{{ draft }}">Draft an email →</a>
+  {%- endif %}
+  {{ contact.value }}
+  {#- Display only, and it hides nothing (§7.1 "classification never excludes"): `info@` is a
+      ticket queue and the scoped personal offer this app drafts converts close to zero in one,
+      so the reader gets to weigh the door before spending a draft on it. The vocabulary is
+      `role_address_prefixes` in config/outreach.yaml; deleting a prefix deletes the hint and
+      never the row. -#}
+  {%- if contact.value | shared_inbox %}
+  <span class="chip">general inbox</span>
+  {%- else %}
+  <span class="chip">direct</span>
+  {%- endif %}
+  {%- else %}
+  {{ chips.external_link(contact.value, contact.value) }}
+  {%- endif %}
+  {%- endif %}
+  {{ chips.confidence_badge(contact.confidence) }}
+</li>
+{%- endmacro -%}
+<section class="panel-section">
+  <h2>Contacts</h2>
+  {#- `contacts` is the route's published/constructed split, not `company.contacts`: SPEC §6's
+      last clause is about what the reader sees, so the two halves are two separate lists under
+      two headings rather than one list distinguished only by a badge. -#}
+  {%- if contacts.published or contacts.constructed %}
+  <p class="muted">Published contacts come from the company&rsquo;s own pages; search shortcuts
+    are links built from its name and domain &mdash; a starting point, not a verified address.</p>
+  <h3 class="contact-group">Published by the company</h3>
+  {%- if contacts.published %}
+  <ul class="contacts">
+    {%- for contact in contacts.published %}{{ contact_row(contact, company) }}{% endfor %}
+  </ul>
+  {%- else %}
+  <p class="muted">Nothing published on their own site yet.</p>
+  {%- endif %}
+  <h3 class="contact-group">Search shortcuts (constructed)</h3>
+  {%- if contacts.constructed %}
+  <ul class="contacts">
+    {%- for contact in contacts.constructed %}{{ contact_row(contact, company) }}{% endfor %}
+  </ul>
+  {%- else %}
+  <p class="muted">None built for this company.</p>
+  {%- endif %}
+  {%- else %}
+  <p class="muted">No contacts on file yet.</p>
+  {%- endif %}
+  {%- if company.people %}
+  <h3 class="contact-group">People</h3>
+  <ul class="contacts">
+    {%- for person in company.people %}
+    <li>
+      {{ person.full_name }}
+      {%- if person.title %} <span class="muted">{{ person.title }}</span>{% endif %}
+      {%- if person.role_type %} <span class="muted">{{ person.role_type | label }}</span>{% endif %}
+      {%- if person.linkedin_url %} {{ chips.external_link(person.linkedin_url, 'LinkedIn') }}{% endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+  {#- Only worth saying when there is a link to say it about: an EDGAR officer list has names
+      and titles and no profile URL at all, and the sentence would be about nothing. -#}
+  {%- if company.people | selectattr('linkedin_url') | list %}
+  <p class="muted">Every profile link here was published on the company&rsquo;s own site; no
+    LinkedIn page is ever fetched (SPEC §4, §6).</p>
+  {%- endif %}
+  {%- endif %}
+</section>
+
+{#- 6. The full open-roles table ----------------------------------------------------------- #}
 {#- One sortable column header (§9 "sortable ... within the row"). It is an ordinary link to
     the permalink first — with JavaScript off, following it loads `/company/{id}` showing this
     same table in the requested order — and an htmx swap of this panel second: the same two
@@ -267,82 +448,7 @@
   {%- endif %}
 </section>
 
-{#- 5. Contacts ---------------------------------------------------------------------------- #}
-{#- One contact row. `linkedin_people` is the odd one out on purpose: SPEC §6 says the UI
-    renders the people search "as a 'Find people →' button", so it gets the control and drops
-    the muted kind prefix that would otherwise print its label twice. Everything else is a
-    labelled value. The confidence badge stays on every row even though the group heading above
-    already says which half this is — §6 asks for the distinction to be obvious, and a badge
-    travels with the row when it is copied, screenshotted or read out of order. -#}
-{%- macro contact_row(contact) -%}
-<li>
-  {%- if contact.kind == 'linkedin_people' %}
-  {{ chips.external_link(contact.value, 'Find people →', 'button') }}
-  {%- else %}
-  <span class="muted">{{ contact.kind | label }}</span>
-  {%- if contact.kind == 'email' %}
-  {#- Not a URL, so `safe_url` does not apply; the scheme is hard-coded here and the
-      value is autoescaped, so nothing user-sourced can change the scheme.
-
-      This comment ends without a trailing `-`: the newline after it is the only whitespace
-      between the kind label and the address, and stripping it renders "Emailhr@acme.com". #}
-  <a href="mailto:{{ contact.value }}">{{ contact.value }}</a>
-  {%- else %}
-  {{ chips.external_link(contact.value, contact.value) }}
-  {%- endif %}
-  {%- endif %}
-  {{ chips.confidence_badge(contact.confidence) }}
-</li>
-{%- endmacro -%}
-<section class="panel-section">
-  <h2>Contacts</h2>
-  {#- `contacts` is the route's published/constructed split, not `company.contacts`: SPEC §6's
-      last clause is about what the reader sees, so the two halves are two separate lists under
-      two headings rather than one list distinguished only by a badge. -#}
-  {%- if contacts.published or contacts.constructed %}
-  <p class="muted">Published contacts come from the company&rsquo;s own pages; search shortcuts
-    are links built from its name and domain &mdash; a starting point, not a verified address.</p>
-  <h3 class="contact-group">Published by the company</h3>
-  {%- if contacts.published %}
-  <ul class="contacts">
-    {%- for contact in contacts.published %}{{ contact_row(contact) }}{% endfor %}
-  </ul>
-  {%- else %}
-  <p class="muted">Nothing published on their own site yet.</p>
-  {%- endif %}
-  <h3 class="contact-group">Search shortcuts (constructed)</h3>
-  {%- if contacts.constructed %}
-  <ul class="contacts">
-    {%- for contact in contacts.constructed %}{{ contact_row(contact) }}{% endfor %}
-  </ul>
-  {%- else %}
-  <p class="muted">None built for this company.</p>
-  {%- endif %}
-  {%- else %}
-  <p class="muted">No contacts on file yet.</p>
-  {%- endif %}
-  {%- if company.people %}
-  <h3 class="contact-group">People</h3>
-  <ul class="contacts">
-    {%- for person in company.people %}
-    <li>
-      {{ person.full_name }}
-      {%- if person.title %} <span class="muted">{{ person.title }}</span>{% endif %}
-      {%- if person.role_type %} <span class="muted">{{ person.role_type | label }}</span>{% endif %}
-      {%- if person.linkedin_url %} {{ chips.external_link(person.linkedin_url, 'LinkedIn') }}{% endif %}
-    </li>
-    {%- endfor %}
-  </ul>
-  {#- Only worth saying when there is a link to say it about: an EDGAR officer list has names
-      and titles and no profile URL at all, and the sentence would be about nothing. -#}
-  {%- if company.people | selectattr('linkedin_url') | list %}
-  <p class="muted">Every profile link here was published on the company&rsquo;s own site; no
-    LinkedIn page is ever fetched (SPEC §4, §6).</p>
-  {%- endif %}
-  {%- endif %}
-</section>
-
-{#- 6. Provenance -------------------------------------------------------------------------- #}
+{#- 7. Provenance -------------------------------------------------------------------------- #}
 <section class="panel-section">
   <h2>Provenance</h2>
   {%- if company.source_links %}
@@ -355,7 +461,7 @@
   {%- endif %}
 </section>
 
-{#- 7. Note / status / rating -------------------------------------------------------------- #}
+{#- 8. Note / status / rating -------------------------------------------------------------- #}
 <section class="panel-section">
   <h2>Your notes</h2>
   {% with company_id = company.id, saved = false %}{% include "_note_form.html" %}{% endwith %}

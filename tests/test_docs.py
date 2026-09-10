@@ -21,15 +21,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.core import TyperGroup
 from typer.main import get_command
 
 import cli
 from db import enums, queries
 from ingest.base import CompanyTarget
-from ingest.config import UNIMPLEMENTED_CONNECTORS, load_connectors_config, load_regions_config
+from ingest.config import (
+    LINKEDIN_NOTE_LIMIT,
+    OUTREACH_YAML,
+    UNIMPLEMENTED_CONNECTORS,
+    load_connectors_config,
+    load_outreach_config,
+    load_regions_config,
+)
 from ingest.connectors import all_connectors
+from ingest.connectors.hn_hiring import HnHiringOptions
 from ingest.seed import SeedConnector
+from web.filters import shared_filters
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "docs" / "SOURCES.md"
@@ -510,6 +520,20 @@ _README_METRO_HEADING = re.compile(r"^companies \w+ metro\b.*$", re.MULTILINE)
 _README_METRO_COUNT_ROW = re.compile(r"^ {2}(?P<metro>\S.*?) {2,}\d+$")
 
 
+def readme_section_text(title: str) -> str:
+    """The body of one ``##`` section of the README, exactly as written.
+
+    The slice runs to the next second-level heading, and a third-level one is not that: a
+    ``###`` subsection belongs to the section it sits under, which is what lets a check scoped to
+    a section reach the tables and samples inside it. Line structure is kept because a table is
+    parsed by rows; :func:`readme_section` is the collapsed view for checking prose.
+    """
+    text = README.read_text(encoding="utf-8")
+    start = text.index(f"\n## {title}\n")
+    end = text.find("\n## ", start + 1)
+    return text[start : len(text) if end == -1 else end]
+
+
 def readme_section(title: str) -> str:
     """The body of one ``##`` section of the README, whitespace collapsed.
 
@@ -517,10 +541,7 @@ def readme_section(title: str) -> str:
     a line break would test where the wrapping fell rather than what the sentence says, and the
     claims below have to survive a reflow of the paragraph they sit in.
     """
-    text = README.read_text(encoding="utf-8")
-    start = text.index(f"\n## {title}\n")
-    end = text.find("\n## ", start + 1)
-    return " ".join(text[start : len(text) if end == -1 else end].split())
+    return " ".join(readme_section_text(title).split())
 
 
 def readme_sample_metros() -> list[str]:
@@ -619,3 +640,141 @@ def test_the_readme_regions_section_documents_the_flag_and_the_order_of_operatio
     # The claim the command's own docstring makes, in the document read before the docstring is.
     assert "no `fetch_runs` row is written" in section
     assert "sync-regions" in registered_cli_commands(), "the README names a command that must exist"
+
+
+# ------------------------------ README claims about the outreach pitch (SPEC §6, §12 Phase 8)
+
+#: One row of the README's ``config/outreach.yaml`` key table: "| `email.subject` | subject … |".
+#: Dotted through one level of nesting, because that is how the file is written and therefore how
+#: it is edited — the model that loads it is flat (``email_subject``) and nobody edits the model.
+_README_OUTREACH_KEY_ROW = re.compile(r"^\|\s*`(?P<key>[a-z_]+(?:\.[a-z_]+)?)`\s*\|", re.MULTILINE)
+#: The README's statement of LinkedIn's own limit on a connection-request note.
+_README_NOTE_CAP = re.compile(r"caps a connection-request note at (?P<cap>\d+) characters")
+#: ...and of how many "Who is hiring?" threads one ``hn_hiring`` run reads: "ships at **1** thread".
+_README_HN_THREADS = re.compile(r"ships at \*\*(?P<threads>\d+)\*\* thread")
+
+
+def outreach_keys() -> set[str]:
+    """The keys ``config/outreach.yaml`` actually holds, dotted through one level of nesting.
+
+    Read out of the YAML rather than off :class:`ingest.config.OutreachConfig`, whose fields are
+    deliberately a different shape: the model is flat and the file nests, and the document
+    describes the file, since that is the thing a reader opens and rewrites.
+    """
+    document = yaml.safe_load(OUTREACH_YAML.read_text(encoding="utf-8"))
+    assert isinstance(document, dict), "config/outreach.yaml is no longer a mapping"
+    found: set[str] = set()
+    for key, value in document.items():
+        if isinstance(value, dict):
+            found.update(f"{key}.{nested}" for nested in value)
+        else:
+            found.add(key)
+    return found
+
+
+def readme_outreach_keys() -> set[str]:
+    """The keys the README's Outreach section says that file has."""
+    section = readme_section_text("Outreach")
+    return {match["key"] for match in _README_OUTREACH_KEY_ROW.finditer(section)}
+
+
+def test_the_readme_documents_every_outreach_key_and_only_keys_the_file_has() -> None:
+    """SPEC §12 Phase 8 puts the pitch in ``config/outreach.yaml`` precisely so it can be
+    rewritten without touching Python, which makes the README's key table the instructions for
+    doing it — and instructions naming a key that is not there are worse than none: the model
+    forbids unknown keys, so a reader who follows them gets a file the loader refuses and an app
+    that will not start, with nothing but a field path to say which line to take back out.
+
+    Checked in both directions, because both directions fail a reader. A documented key the file
+    does not define is that broken edit; a defined key the table omits is a knob nobody finds —
+    and the two guard lists are exactly the kind of thing nobody would think to look for.
+    """
+    documented = readme_outreach_keys()
+    defined = outreach_keys()
+
+    assert documented, "the README no longer lists config/outreach.yaml's keys"
+    assert documented == defined, (
+        f"the README documents {sorted(documented - defined)} which the file does not define, "
+        f"and omits {sorted(defined - documented)} which it does"
+    )
+    # The file the table describes is one the loader accepts, so "these are the keys" and "this
+    # is a file that starts the app" are the same claim rather than two.
+    load_outreach_config()
+
+
+def test_the_readme_states_the_note_cap_the_loader_enforces() -> None:
+    """The 300-character cap is LinkedIn's, not this project's, and the README is where somebody
+    about to rewrite ``linkedin.note`` learns the budget they are writing inside.
+
+    A number stated in prose and enforced in code is the same fact stored twice, and the copy the
+    reader trusts is never the one that runs (the premise of this whole module). It matters more
+    here than for most: a template that overshoots does not render badly, it fails on load, so a
+    README quoting a laxer number would send the reader to a file that stops the app from
+    starting — and one quoting a stricter number would have them cutting a sentence they could
+    have kept.
+
+    The shipped note is measured too, filled in the way the panel fills it. That is what stops
+    the pair of claims being true of nothing: a cap the README states correctly and the shipped
+    pitch already breaks would mean the file could not be loaded at all.
+    """
+    # Whitespace collapsed: the claim must survive a reflow of the paragraph it sits in.
+    match = _README_NOTE_CAP.search(readme_section("Outreach"))
+    assert match is not None, "the README no longer states LinkedIn's cap on a connection note"
+    assert int(match["cap"]) == LINKEDIN_NOTE_LIMIT, (
+        f"the README says LinkedIn caps a note at {match['cap']} characters; "
+        f"ingest.config enforces {LINKEDIN_NOTE_LIMIT}"
+    )
+
+    drafted = load_outreach_config().linkedin_note.format(company="Acme", person="Ada Lovelace")
+    assert len(drafted) <= LINKEDIN_NOTE_LIMIT
+
+
+def test_the_new_filter_is_documented_under_the_name_that_travels_on_the_wire() -> None:
+    """SPEC §12 Phase 8's filter is spelled two ways on purpose — ``has_email`` in a URL, what the
+    box is *for*, and ``has_published_email`` on :class:`db.queries.Filters`, what has to be true
+    for it — and the README's parameter table is the one place a reader gets the first from.
+
+    So the row is checked against the parser rather than against a memory of it: the name the
+    table gives is fed to :func:`web.filters.shared_filters` and has to come back as the flag it
+    promises. A table documenting the *field* name would read plausibly and produce a URL that
+    filters nothing, which is the failure this catches — an ignored unknown parameter is silent
+    (SPEC §9's filters are all opt-in), so nothing else would ever say so.
+    """
+    section = readme_section("Web interface")
+    assert "`has_email=1`" in section, "SPEC §12 Phase 8's filter is missing from the table"
+
+    assert shared_filters(has_email="1").has_published_email is True, (
+        "the README tells a reader to write `has_email=1`, and shared_filters ignores it"
+    )
+    assert shared_filters().has_published_email is False, "it has to be off unless it is asked for"
+
+
+def test_the_readme_states_the_thread_cap_hn_hiring_actually_runs_with() -> None:
+    """The backfill knob decides how much of the one source that yields *people's own* addresses
+    this app has ever read — 22 of the 25 addresses it found in one thread name a person, against
+    1 of the 9 crawled off company sites — so the README documents raising it, what it costs and
+    what to expect back.
+
+    Every number in that paragraph is really a claim about ``config/connectors.yaml``, which is
+    the only place a connector's cadence, rate limit or options are defined (SPEC §7.2,
+    CLAUDE.md), so all three are read back out of the prose and compared with it, exactly as the
+    cadence table above is. The estimate the paragraph gives — threads times comments, at the
+    configured rate — is only as good as its inputs, and an operator budgeting half an hour off a
+    stale one is the reason to check them rather than trust them.
+    """
+    section = readme_section("Outreach")
+    config = load_connectors_config().get("hn_hiring")
+    options = HnHiringOptions.model_validate(config.options)
+
+    match = _README_HN_THREADS.search(section)
+    assert match is not None, "the README no longer says how many threads one hn_hiring run reads"
+    assert int(match["threads"]) == options.max_threads, (
+        f"the README says hn_hiring ships reading {match['threads']} thread(s); "
+        f"config/connectors.yaml configures {options.max_threads}"
+    )
+
+    assert f"{options.max_comments_per_thread} comments per thread" in section
+    rate = config.rate_limit.requests_per_second
+    assert f"{rate:g} requests/second" in section, (
+        f"the README's run-time estimate is built on a rate the config does not set ({rate})"
+    )

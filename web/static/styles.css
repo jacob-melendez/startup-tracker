@@ -130,6 +130,10 @@ a { color: var(--accent); }
 a.button { display: inline-block; padding: 0 8px; text-decoration: none;
   border: 1px solid var(--line); border-radius: 4px; }
 a.button:hover { background: var(--raised); }
+/* The drafted note (SPEC §12 Phase 8) is a real <textarea> — with no JavaScript of our own there
+   is nothing here to copy it for you — sized to show all 300 characters without scrolling. */
+.draft textarea { width: 100%; max-width: 46em; padding: 3px 5px; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 
 /* Tables: hairline row rules only, never a border per cell. A wide table scrolls inside its
    own wrapper so the page itself never scrolls sideways. */
