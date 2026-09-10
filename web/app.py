@@ -11,6 +11,11 @@ Wiring:
 * :func:`create_app` takes an optional session factory. In production the lifespan builds one
   from :mod:`settings` and disposes the engine on shutdown; a test passes its own factory (for
   a disposable database) and the lifespan then owns nothing.
+* The lifespan also reads ``config/outreach.yaml``, so a pitch that does not load takes the
+  process down at startup rather than surfacing as a 500 on the first company row somebody
+  expands (SPEC §12 Phase 8). Note that httpx's ``ASGITransport`` does not run lifespan events,
+  so a test driving the app directly does not get that check — which is why the loader still
+  validates on its own and ``tests/test_outreach_config.py`` exercises it directly.
 * Errors are pages, not JSON blobs: a 404 for an unknown company and a 400 for a hand-edited
   ``cursor=`` or an invalid enum value render ``error.html`` with the status code intact. A
   client that did not ask for HTML still gets JSON.
@@ -36,6 +41,11 @@ from starlette.status import HTTP_400_BAD_REQUEST
 
 from db.queries import CursorError
 from db.session import dispose_engine, get_session_factory
+
+# Local YAML only — the same door `web.templating` and `web.routes.runs` already import through,
+# and `tests/test_web_acceptance.py` exempts `ingest.config` from FORBIDDEN_IMPORTS on exactly
+# those grounds: it parses files and never fetches (SPEC §2).
+from ingest.config import load_outreach_config
 from logging_config import configure_logging, get_logger
 from settings import get_settings
 from web.routes import companies, roles, runs
@@ -60,9 +70,21 @@ def create_app(session_factory: async_sessionmaker[AsyncSession] | None = None) 
         # on a valid environment (the module-level ``app`` below is imported by tests too).
         settings = get_settings()
         configure_logging(settings.log_level, settings.log_json)
+        # Read the pitch once, here, so a broken `config/outreach.yaml` stops the process at
+        # startup instead of turning the first expanded company row into a 500 (SPEC §12 Phase 8).
+        # That is what the file's own header promises — "the loader fails on a name it does not
+        # know rather than letting a typo raise inside a request handler" — and without this call
+        # nothing loads it until a template asks, which is inside a handler. The loader is
+        # `@cache`d on its path, so this is also the read every later render is served from.
+        # It parses local YAML and nothing else: no outbound call, so SPEC §2 is untouched.
+        outreach = load_outreach_config()
         owns_engine = session_factory is None
         app.state.session_factory = session_factory or get_session_factory()
-        log.info("web.startup", owns_engine=owns_engine)
+        log.info(
+            "web.startup",
+            owns_engine=owns_engine,
+            outreach_contact_priority=[role.value for role in outreach.contact_priority],
+        )
         try:
             yield
         finally:

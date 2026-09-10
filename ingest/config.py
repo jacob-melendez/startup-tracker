@@ -778,16 +778,25 @@ class OutreachConfig(BaseModel):
         compared against the text before the ``@`` of an already-lower-cased address, so a stored
         ``@`` or a stray capital simply never matches, and the shared-inbox hint quietly stops
         appearing for that one prefix. A hint that is missing looks exactly like a hint that was
-        not warranted, so the mistake is caught here instead. Case is folded rather than
-        rejected, since only the ``@`` is a real error.
+        not warranted, so the mistake is caught here instead.
+
+        ``careers+hn`` is the same mistake wearing different clothes, and the corpus invites it:
+        ``config/outreach.yaml`` discusses plus-addressing right above the list, and real
+        addresses in the database are written that way. :func:`web.templating.shared_inbox` cuts
+        the ``+tag`` off an address *before* the comparison, so a prefix carrying one can never
+        equal what it is compared against — and the cost is not only a missing hint, since a
+        shared inbox that is not recognised is offered as the panel's top door ahead of a named
+        founder (SPEC §12 Phase 8). Case is folded rather than rejected, because a capital says
+        what was meant; a stray ``@``, space or ``+`` does not.
         """
         cleaned: set[str] = set()
         for prefix in value:
             text = _require_text(prefix, "role_address_prefixes").casefold()
-            if "@" in text or any(character.isspace() for character in text):
+            if "@" in text or "+" in text or any(character.isspace() for character in text):
                 msg = (
                     f"role address prefix {prefix!r} must be the local part on its own, "
-                    "without an @ or whitespace"
+                    "without an @ or whitespace, and without a +tag — the tag is cut off an "
+                    "address before the comparison, so write the part before the +"
                 )
                 raise ValueError(msg)
             cleaned.add(text)
@@ -807,7 +816,7 @@ class OutreachConfig(BaseModel):
 
     @model_validator(mode="after")
     def _reject_undraftable_templates(self) -> OutreachConfig:
-        """Two rules a pitch file must satisfy, checked once on load rather than once per render.
+        """Three rules a pitch file must satisfy, checked once on load rather than once per render.
 
         *Every placeholder is one the renderer will fill.* ``str.format`` raises ``KeyError`` for
         a name it was not given, and the only place these templates are ever formatted is while
@@ -816,12 +825,22 @@ class OutreachConfig(BaseModel):
         and fixed, so the honest place to catch the typo is here, naming both the key and the
         placeholder.
 
+        *Every template actually renders.* Checking the names is not the same as checking the
+        template: :class:`string.Formatter` parses a format spec and a conversion without
+        validating either, so ``{company: the newer one}`` — a note left inside the braces — and
+        ``{company:your team}`` — the default-value idiom borrowed from another templating
+        language — both name a placeholder this file knows and both raise at render time, in the
+        request handler this validator exists to keep clean. So each template is drafted here
+        against :data:`_SAMPLE_COMPANY` and :data:`_SAMPLE_PERSON`, and the failure names the key
+        rather than surfacing a bare ``KeyError`` from inside ``format``.
+
         *The LinkedIn note fits.* 300 characters is LinkedIn's cap on a connection-request note
         and it is measured on the note as sent, so a template is only as short as its filled-in
-        form; it is measured here against :data:`_SAMPLE_COMPANY` and :data:`_SAMPLE_PERSON`. The
-        message gives the overshoot, because "too long" without a number means editing and
-        reloading until it stops failing.
+        form; it is measured on the draft made just above. The message gives the overshoot,
+        because "too long" without a number means editing and reloading until it stops failing.
         """
+        samples = {"company": _SAMPLE_COMPANY, "person": _SAMPLE_PERSON}
+        drafts: dict[str, str] = {}
         for field, template, allowed in (
             ("email.subject", self.email_subject, _EMAIL_PLACEHOLDERS),
             ("email.body", self.email_body, _EMAIL_PLACEHOLDERS),
@@ -833,8 +852,17 @@ class OutreachConfig(BaseModel):
                 named = ", ".join(sorted(f"{{{name}}}" for name in unknown))
                 msg = f"{field} uses {named}, which nothing fills in; it may use: {offered}"
                 raise ValueError(msg)
+            try:
+                drafts[field] = template.format(**{name: samples[name] for name in allowed})
+            except (ValueError, KeyError, IndexError) as exc:
+                # ValueError: a bad format spec or conversion. KeyError: a nested spec naming a
+                # field nothing fills (``{company:{width}}``). IndexError: a positional one.
+                # An AttributeError cannot reach here — a dotted field name is an unknown
+                # placeholder and was refused above.
+                msg = f"{field} is not a template str.format can render: {exc}"
+                raise ValueError(msg) from exc
 
-        drafted = self.linkedin_note.format(company=_SAMPLE_COMPANY, person=_SAMPLE_PERSON)
+        drafted = drafts["linkedin.note"]
         if len(drafted) > LINKEDIN_NOTE_LIMIT:
             over = len(drafted) - LINKEDIN_NOTE_LIMIT
             msg = (

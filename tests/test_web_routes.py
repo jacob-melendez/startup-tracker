@@ -759,11 +759,11 @@ async def test_the_way_in_filter_is_opt_in_and_never_narrows_by_default(
 
     Two spellings of "unset" have to mean the same thing as no parameter at all: the absent one
     a first visit sends, and the ``?has_email=`` a GET form produces for an untouched box —
-    ``web.filters``' second rule, and the one that costs the most if it slips here. Almost no
-    company has a published address (31 of 9,220 when this phase was written), so a box that
-    read a blank value as "false but set", or that came up ticked, would not trim the list: it
-    would empty it, and the reader would be looking at 0.3% of the database believing it is all
-    of it.
+    ``web.filters``' second rule, and the one that costs the most if it slips here. Few companies
+    have a published address (31 of 9,220 when this phase was written; 397 of 10,219 measured
+    2026-09-09, after the backfill), so a box that read a blank value as "false but set", or that
+    came up ticked, would not trim the list: it would cut it to a twenty-fifth of itself, and the
+    reader would be looking at that believing it is all of it.
 
     The narrowing is asserted against a corpus where the excluded companies are not simply
     contactless — Quiet carries a contact row of its own — so what is being pinned is the
@@ -957,8 +957,9 @@ async def test_an_unfiltered_page_pre_selects_nothing(
         "flexible": [],
         "open_roles": [],
         # SPEC §12 Phase 8's box is opt-in like the two above it, and it is the one where a
-        # default-on control would be indefensible: 9,189 of 9,220 companies have no published
-        # address, so a form that shipped this ticked would open on 0.3% of the database.
+        # default-on control would be indefensible: 9,822 of 10,219 companies had no published
+        # address when this was measured (2026-09-09, after the hn_hiring backfill), so a form
+        # that shipped this ticked would open on 4% of the database.
         "has_email": [],
     }
 

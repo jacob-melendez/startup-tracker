@@ -25,9 +25,16 @@
 #   email.body      body of the same draft. Keep it short for two reasons: a cold email that
 #                   scrolls does not get read, and the whole `mailto:` URL is percent-encoded,
 #                   which adds about half again to its length — mail clients start truncating
-#                   around 2,000 characters, so roughly 1,200 characters of body is the real
-#                   ceiling. The body below is 760 and the URL it builds about 1,200 — the
-#                   numbers the README quotes, measured rather than estimated.
+#                   around 2,000 characters, so keep the body under 1,000. That is the ceiling
+#                   that holds for every company name, not the arithmetic one: measured against
+#                   this body's punctuation, the longest that survives intact is 1,153 characters
+#                   for the longest company name in this database and 1,067 if the subject also
+#                   runs to its own cap, so a body written to "about 1,200" is cut for some
+#                   companies and not others. `tests/test_outreach_config.py` pins the 1,000.
+#                   The body below is 722 characters, and the URL it builds runs
+#                   1,113-1,262 across the published addresses this database holds — measured on
+#                   2026-09-09, not estimated. Both are worth re-measuring when the body is
+#                   rewritten, because no test pins either number.
 #   linkedin.note   the draft for a connection request. LinkedIn caps that note at 300
 #                   characters and refuses to send one character more, so the loader fills the
 #                   placeholders with a representative company and person name and fails on load
@@ -39,7 +46,8 @@
 #                   most once — the list is an order, so a repeat is unreachable.
 #   role_address_prefixes
 #                   local parts that mark an address as a shared inbox rather than a person.
-#                   Bare local part, no `@`.
+#                   Bare local part: no `@`, and no `+tag` either — the tag is cut off an
+#                   address before the comparison, so a prefix carrying one matches nothing.
 #   entity_markers  words that prove a "person" is a legal entity, not a human.
 #
 # The templates below are the shipped starting point, not advice: they are yours to rewrite, and
@@ -79,13 +87,21 @@ email:
 linkedin:
   # Deliberately well short of the 300-character cap. The loader measures this filled in with a
   # representative pair of names, and a real company or founder with a longer name has to fit in
-  # the same budget: as written it renders to 252 characters for an 18-character company and a
-  # 20-character person, and 274 for the longest plausible pair. Spend the slack on their name,
-  # not on another sentence — the ask at the end is the only part that has to survive.
+  # the same budget: as written it renders to 258 characters for an 18-character company and a
+  # 20-character person, and overshoots for 20 of the 16,117 company-and-person pairs stored on
+  # 2026-09-09 — the panel clamps those. Spend the slack on their name, not on another sentence
+  # — the ask at the end is the only part that has to survive.
+  #
+  # `{company}` is deliberately not the last word of its sentence. 2,292 of the 10,219 stored
+  # company names end in a full stop, because SPEC §8 strips the legal suffix into the matching
+  # key and keeps it in the name a human reads ("Antora Energy, Inc."), so "spend them at
+  # {company}." drafts "at Antora Energy, Inc.. Give me one thing" — a doubled period in the one
+  # string of this whole app that gets pasted verbatim in front of a stranger. Keep a word after
+  # the placeholder.
   note: >-
     Hi {person} - I'm a Stanford student with 10-15 hrs/week free this quarter, and
-    I'd like to spend them at {company}. Give me one thing nobody has had a week for -
-    an internal tool, a prototype - and I'll own it. Worth a short chat?
+    {company} is where I'd like to spend them. Give me one thing nobody has had a week
+    for - an internal tool, a prototype - and I'll own it. Worth a short chat?
 
 # Founder first, recruiter last. This inverts the usual advice on purpose, and the corpus is the
 # argument: measured on 2026-09-09, 866 of these companies name a founder and exactly 2 of
@@ -95,20 +111,29 @@ linkedin:
 contact_priority: [founder, exec, eng_lead, recruiter]
 
 # SPEC §12 Phase 8: an address whose local part is one of these is a ticket queue, and a scoped
-# personal offer sent to a ticket queue converts close to zero. Measured on the live database,
-# 8 of the 9 addresses crawled off company sites are one of these and 22 of the 25 found in
-# "Who is hiring?" comments are a named person's own address — the split is worth showing.
+# personal offer sent to a ticket queue converts close to zero. Measured on the live database on
+# 2026-09-09, after this phase's backfill: all 9 of the addresses crawled off company sites are
+# one of these, and 305 of the 437 found in "Who is hiring?" comments are a named person's own
+# address — the split is worth showing, and it is why the two sources cannot be treated alike.
 #
-# Display only: the panel renders a quiet "general inbox" hint beside the address and hides
-# nothing, because classification here never excludes (SPEC §7.1). Removing a prefix removes
-# the hint; it never removes a company.
+# This list HIDES nothing and it RANKS. Both halves matter, and the second one is the surprise.
+# Nothing is excluded: the address keeps its row under Contacts with its own "Draft an email →"
+# button, and no company leaves the list (SPEC §7.1, classification never excludes). But the
+# panel's "How to reach them" ranks a shared inbox BELOW a named human while a personal address
+# outranks every LinkedIn tier — so adding a prefix demotes that company's `mailto:` out of the
+# lead, and removing one promotes it back. Measured on 2026-09-09 that reordering reaches 6 of
+# the 397 emailable companies: the ones publishing only a shared inbox that also name somebody.
+# The other 112 of the 118 name nobody, so the shared address is still the best door they have
+# and is still what the panel offers.
 #
 # The second row is what the Phase 8 backfill turned up that the first row missed, counted over
-# every published address on 2026-09-09: `hiring` (6), `recruiting` (3), `accommodations` (2),
-# `hn` (2) and `join` (1) are all queues, and `hr` is one everywhere even though this corpus
-# happens not to hold one. A `+tag` is cut before the comparison, so `careers+hn@` is a queue and
-# `austin+hn@` is Austin — plus-addressing is how a person tags their own mail, and the two read
-# identically until you cut the tag.
+# all 446 published addresses on 2026-09-09: `hiring` (19), `recruiting` (7), `hn` (6),
+# `talent` (4), `join` (3), `accommodations` (2) and `apply` (1) are all queues, and `hr` and
+# `people` are queues everywhere even though this corpus happens to hold neither. A `+tag` is cut
+# before the comparison, so `careers+hn@` is a queue and `austin+hn@` is Austin — plus-addressing
+# is how a person tags their own mail, and the two read identically until you cut the tag. Which
+# is also why a prefix is written bare here: `careers`, never `careers+hn`, since the tag is gone
+# before the comparison and a prefix carrying one could match nothing. The loader refuses one.
 role_address_prefixes:
   [
     info, support, hello, contact, jobs, careers, team, admin, sales, press,
@@ -127,12 +152,13 @@ role_address_prefixes:
 # to message.
 #
 # The spelled-out forms earn their place by measurement, not by symmetry: run against every
-# stored person on 2026-09-09, the abbreviations alone still left 54 filings offered as people to
-# write to — "Limited Liability Company Tom Kirdahy Productions", "n/a Deloitte LLP",
-# "Delaware Life Insurance Company" — because EDGAR writes out what a form abbreviates. Adding
-# them costs 12 companies a named door, and every one of those 12 is a filing rather than a
-# human, so the door it falls back to is the honest one. `Holdings` was measured too and left
-# out on purpose: it would have caught one more entity and one name that reads like a person's.
+# stored person on 2026-09-09, the abbreviations alone still left 42 person rows — 27 distinct
+# names across 36 companies — offered as people to write to, among them "Limited Liability
+# Company Tom Kirdahy Productions" and "Delaware Life Insurance Company", because EDGAR writes
+# out what a form abbreviates. Adding them costs 12 companies a named door, and every one of
+# those 12 is a filing rather than a human, so the door it falls back to is the honest one.
+# `Holdings` was measured too and left out on purpose: it would have caught one more entity
+# ("Holdings Ally Medical") and one name that reads like a person's ("Steve Holdings Owen").
 entity_markers:
   [
     LLC,

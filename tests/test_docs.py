@@ -751,9 +751,9 @@ def test_the_new_filter_is_documented_under_the_name_that_travels_on_the_wire() 
 
 def test_the_readme_states_the_thread_cap_hn_hiring_actually_runs_with() -> None:
     """The backfill knob decides how much of the one source that yields *people's own* addresses
-    this app has ever read — 22 of the 25 addresses it found in one thread name a person, against
-    1 of the 9 crawled off company sites — so the README documents raising it, what it costs and
-    what to expect back.
+    this app has ever read — 305 of the 437 addresses it has found in those threads name a person,
+    against 0 of the 9 crawled off company sites (measured 2026-09-09) — so the README documents
+    raising it, what it costs and what to expect back.
 
     Every number in that paragraph is really a claim about ``config/connectors.yaml``, which is
     the only place a connector's cadence, rate limit or options are defined (SPEC §7.2,

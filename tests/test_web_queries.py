@@ -616,7 +616,8 @@ async def test_has_published_email_is_a_semi_join_over_addresses_somebody_publis
     that somebody offered this address. Paged Labs has a careers page it published itself:
     a real row, published by the company, that is not something you can write to — so ``kind``
     is what stops "has any contact at all" from passing for "has a way in", which on the live
-    database would be the difference between 31 companies and all 9,220 of them.
+    database would be the difference between 397 companies and all 10,219 of them (measured
+    2026-09-09; a corpus count is prose here, since a test may not read that database).
 
     **It constrains the company, not a role.** Roleless Labs has an address and no jobs at all,
     and is returned. Folding this into ``Filters.has_job_filters`` — where it looks at first

@@ -29,6 +29,7 @@ turned into a ``mailto:`` and how the note reaches a ``<textarea>`` belong to
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -76,7 +77,17 @@ REALISTIC_PERSON = "Konstantinos Papadopoulos"
 #: the URL around 2,000 characters — so the body is the half of the budget that is written by
 #: hand, and this is what is left for it. A truncated draft is worse than a short one: it opens
 #: looking finished and stops mid-sentence.
-MAILTO_BODY_BUDGET = 1_200
+#:
+#: 1,000 rather than the arithmetic maximum, and the gap is the point. What is left for the body
+#: is ``web.templating.MAILTO_MAX_URL`` minus the ``mailto:`` prefix, and that prefix carries the
+#: *address* and the *subject* — both of which vary per company, because ``{company}`` is
+#: interpolated into the subject too. Measured against the shipped body's punctuation, the longest
+#: raw body that survives ``mailto_url`` intact is 1,153 characters for the longest company name
+#: in the live database and 1,067 with the subject at its own ``_MAILTO_SUBJECT_MAX`` cap. So a
+#: ceiling of 1,200 — which is what this constant used to be — admits a body that is silently cut
+#: for a long-named company and whole for a short-named one. A guard against truncation that
+#: depends on which row you are looking at is not a guard, and 1,000 clears the tightest case.
+MAILTO_BODY_BUDGET = 1_000
 
 
 def write_outreach(tmp_path: Path, name: str, document: Mapping[str, Any]) -> OutreachConfig:
@@ -366,6 +377,70 @@ def test_a_positional_or_unbalanced_placeholder_fails_on_load(tmp_path: Path) ->
         )
 
 
+@pytest.mark.parametrize(
+    ("name", "field", "document"),
+    [
+        # The realistic bad edit: a note to yourself left inside the braces while rewriting the
+        # pitch. `{company}` is a name this file knows, so the placeholder check passes it.
+        (
+            "aside",
+            "email.body",
+            {"subject": "Hi", "body": "I'd like to help {company: the newer one}."},
+        ),
+        # The default-value idiom borrowed from another templating language.
+        (
+            "default",
+            "email.body",
+            {"subject": "Hi", "body": "I'd like to help {company:your team}."},
+        ),
+        # A spec that is real but wrong for a string: `d` is an integer presentation type.
+        ("integer-spec", "email.subject", {"subject": "Hi {company:d}", "body": "Hi."}),
+        # An unknown conversion. `!r` and `!s` exist; `!x` does not.
+        ("conversion", "email.body", {"subject": "Hi", "body": "Hi {company!x}."}),
+        # A nested spec naming a field nothing fills — the KeyError arm rather than the ValueError
+        # one, and the case that used to escape as a bare `KeyError: 'width'`.
+        ("nested-spec", "email.body", {"subject": "Hi", "body": "Hi {company:{width}}."}),
+    ],
+)
+def test_a_template_that_names_known_placeholders_but_cannot_render_fails_on_load(
+    tmp_path: Path, name: str, field: str, document: dict[str, str]
+) -> None:
+    """Naming the placeholders correctly is not the same as being renderable.
+
+    :class:`string.Formatter` parses a format spec and a conversion without validating either, so
+    every template here passes the placeholder check — each names ``{company}`` and nothing else —
+    and every one of them raises the moment ``format`` is called on it. The only place these are
+    ever formatted is while serving a page, so without this rule each of these edits is a 500 on
+    the first company row somebody expands, carrying a message about a format spec rather than
+    about the file that holds it.
+
+    Parametrized by the *shape* of the mistake rather than by one example of it, because the rule
+    is "the template renders", not "these five strings are rejected" — a validator that special-
+    cased the two idioms above would let ``{company:d}`` through.
+    """
+    with pytest.raises(ValidationError, match=rf"{re.escape(field)} is not a template"):
+        write_outreach(tmp_path, f"unrenderable-{name}", {**MINIMAL, "email": document})
+
+
+def test_a_real_format_spec_still_loads(tmp_path: Path) -> None:
+    """The pin on the other side of the rule above: a spec that renders is left alone.
+
+    ``str.format`` accepts alignment and ``!r`` on a string and always has, and a pitch is allowed
+    to use them. Without this case the check could be tightened into rejecting every colon and
+    every ``!`` in a template — which would pass every test above and quietly narrow what the file
+    is allowed to say.
+    """
+    padded = write_outreach(
+        tmp_path, "aligned", {**MINIMAL, "email": {"subject": "Hi {company:>20}", "body": "Hi."}}
+    )
+    assert padded.email_subject.format(company="Acme") == "Hi " + "Acme".rjust(20)
+
+    quoted = write_outreach(
+        tmp_path, "repr", {**MINIMAL, "email": {"subject": "Hi", "body": "At {company!r}."}}
+    )
+    assert quoted.email_body.format(company="Acme") == "At 'Acme'."
+
+
 def test_a_doubled_brace_is_literal_text_and_not_a_placeholder(tmp_path: Path) -> None:
     """The escape the file documents, checked end to end: ``{{`` is a literal brace to
     :class:`string.Formatter` and to ``format`` alike, so a pitch that wants a brace in it — a
@@ -487,13 +562,25 @@ def test_a_role_address_prefix_must_be_a_bare_local_part(tmp_path: Path) -> None
     ``@`` or a stray capital never matches — and a shared-inbox hint that is missing looks exactly
     like a hint that was not warranted. Nobody would ever report it.
 
-    Case is folded rather than rejected, since only the ``@`` is a real error: a prefix written
-    with a capital is a spelling, not a mistake. An empty list is allowed, and means the hint is
-    switched off in the open — the guard is display-only either way (SPEC §7.1: classification
-    never excludes), so removing a prefix removes a hint and never a company.
+    ``careers+hn`` is the same mistake in different clothes, and this file invites it: the config
+    discusses plus-addressing directly above the list. ``web.templating.shared_inbox`` cuts a
+    ``+tag`` off an address *before* comparing, so a prefix carrying one can never equal what it
+    is compared against.
+
+    Case is folded rather than rejected, because a capital says what was meant while a stray
+    ``@``, space or ``+`` does not. An empty list is allowed, and switches the hint off in the
+    open. What removing a prefix does *not* do is remove a row or a company (SPEC §7.1:
+    classification never excludes) — but it is not free either: the same predicate ranks the
+    panel's door, so an unrecognised shared inbox is offered ahead of a named founder rather
+    than below one. That is the cost this validator exists to prevent.
     """
     with pytest.raises(ValueError, match="must be the local part on its own"):
         write_outreach(tmp_path, "prefix-with-at", {**MINIMAL, "role_address_prefixes": ["info@"]})
+
+    with pytest.raises(ValueError, match=r"write the part before the \+"):
+        write_outreach(
+            tmp_path, "prefix-with-tag", {**MINIMAL, "role_address_prefixes": ["careers+hn"]}
+        )
 
     folded = write_outreach(
         tmp_path, "prefix-case", {**MINIMAL, "role_address_prefixes": ["INFO", " Jobs "]}

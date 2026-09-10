@@ -864,7 +864,7 @@ form still works with JavaScript off. All filters combine into a single paramete
 | `seniority` | yes | Seniority. |
 | `flexible` | | `flexible=1` restricts to roles carrying the `flexible_signal` badge. Off by default, always (SPEC §7.1). |
 | `open_roles` | | `open_roles=1` restricts to companies with at least one open role. |
-| `has_email` | | `has_email=1` restricts to companies carrying an email address they published themselves; a LinkedIn link this app constructed is not one (SPEC §6). Off by default, and 31 of 9,220 companies pass it — the rest are reached the other way ([Outreach](#outreach)). |
+| `has_email` | | `has_email=1` restricts to companies carrying an email address they published themselves; a LinkedIn link this app constructed is not one (SPEC §6). Off by default, and 397 of 10,219 companies pass it as of 2026-09-09 — the rest are reached the other way ([Outreach](#outreach)). |
 | `tracking` | yes | Your own tracking status; `none` matches companies you have never touched. |
 | `closed` | | `/roles` only: `closed=1` also shows roles whose source dropped them. They are never deleted, just stamped `closed_at` (SPEC §2), so this is the historical view. |
 | `sort` | | `/`: `recent_job` (the default — `latest_job_posted_at DESC NULLS LAST`), `funding_date`, `amount`, `newest`, `open_roles`, `name`. `/roles`: `posted` (default), `first_seen`, `company`. |
@@ -930,11 +930,17 @@ change `DATABASE_URL` to match.
 
 ## Outreach
 
-**One of the 1,682 open roles in this database is part-time.** That is not a hole in the data, it
+**Two of the 5,032 open roles in this database are part-time.** That is not a hole in the data, it
 is the fact everything in this section is built around: a startup does not advertise part-time
 work, it invents it when a specific person asks. So an expanded company row leads with how to
 reach a human, and the roles under it are evidence that there is budget and unmet need rather than
 things to apply to (SPEC §12 Phase 8).
+
+**Every corpus figure in this section is dated**, the way the region measurements above are
+(SPEC §11's [aliases](#aliases)). They describe one database on one day and a single connector run
+can move them — the `hn_hiring` backfill below moved most of them by an order of magnitude in half
+an hour. `python cli.py stats` is the live number; a date here is a promise about nothing but the
+day it names.
 
 The row reads, in order: thesis, locations, funding, **How to reach them**, **Contacts**, the full
 open-roles table, the provenance line, your own note. The two contact blocks moved above the
@@ -942,38 +948,56 @@ table; nothing was taken out of it.
 
 ### The email door
 
-31 of 9,220 companies here have an email address they published themselves, so this is the rare
-door — and where it exists it is the row's primary action rather than a small link. **Draft an
-email →** opens your own mail client on a message already carrying the subject and body from
-`config/outreach.yaml` with the company's name filled in, and the address stays beside the button
-as plain text: that is what you copy, and what tells you who you are about to write to.
+397 of 10,219 companies here have an email address they published themselves (2026-09-09), so this
+is still the rare door — and where a *person* published it, it is the row's primary action rather
+than a small link. **Draft an email →** opens your own mail client on a message already carrying
+the subject and body from `config/outreach.yaml` with the company's name filled in, and the
+address stays beside the button as plain text: that is what you copy, and what tells you who you
+are about to write to.
 
 An address whose local part is one of the configured shared-inbox prefixes is marked **general
-inbox**, and every other one **direct**. The mark hides nothing (SPEC §7.1) — `info@` is a ticket
-queue and a scoped personal offer converts close to zero in one, so the point is to let you weigh
-a door before spending a draft on it, never to take it away. Measured on this database, 8 of the 9
-addresses crawled off company sites are a shared inbox, while 22 of the 25 found in Hacker News
-"Who is hiring?" comments are a named person's own.
+inbox**, and every other one **direct**. The mark hides nothing (SPEC §7.1): the address is
+rendered under **Contacts** with its own **Draft an email →** button either way, and no company is
+filtered out for holding one. What it does do is *rank* — `info@` is a ticket queue and a scoped
+personal offer converts close to zero in one, so a shared inbox sits below a named human in **How
+to reach them** and a personal address sits above every LinkedIn tier. The full order is in
+[the LinkedIn door](#the-linkedin-door-which-is-the-main-path) below. Measured on this database on
+2026-09-09, all 9 of the addresses crawled off company sites are a shared inbox, while 305 of the
+437 found in Hacker News "Who is hiring?" comments are a named person's own — 446 published
+addresses over the 397 companies, 305 of them personal.
 
 ### The LinkedIn door, which is the main path
 
-The other 9,189 companies published no address at all, so the LinkedIn door is not a fallback: it
+The other 9,822 companies published no address at all, so the LinkedIn door is not a fallback: it
 is how you reach almost everyone here, and it gets the space to prove it. The panel offers the
 most specific door the stored rows support and says which kind it is, because "here is the founder,
-by name" and "nobody at this company is named yet" are different propositions:
+by name" and "nobody at this company is named yet" are different propositions. Five kinds, best
+first, and the email door sits at *both* ends of the order:
 
+- **a personal address** — the company published an address that reaches a human. No character
+  cap and no connection request, so it outranks every tier below it ([the email
+  door](#the-email-door)).
 - **a profile** — somebody's own profile URL is on file (69 people have one). The link lands on
   that person, with their published title beside it.
 - **a person search** — somebody is named but carries no profile URL (4,946 companies name at
   least one person). The link is a people search scoped to *their name and this company*, which
   lands on one person rather than on a list to triage.
-- **a company search** — nobody is named. The link is SPEC §6's company-wide "Find people →", the
-  one already stored as a constructed contact, now accompanied by who to ask for.
+- **a shared inbox** — every address on file is a `careers@` or an `info@`, and nobody messageable
+  is named. Better than a company-wide search, worse than a person: that is the whole reason
+  `role_address_prefixes` exists.
+- **a company search** — nobody is named and nothing was published. The link is SPEC §6's
+  company-wide "Find people →", the one already stored as a constructed contact, now accompanied
+  by who to ask for.
 
-Every door carries a **connection note** drafted for that company and that person, in a text box
-with its character count. Select it, edit it, paste it: this app ships no JavaScript of its own
-(SPEC §3), so there is no copy button, and a box you can select out of is the control that works
-anyway.
+So a company can hold a published address and still lead with LinkedIn. 118 of the 397 publish
+only shared inboxes, and on 2026-09-09 six of those named a human as well and were handed the
+person instead — the address is still right there under **Contacts**, one line down.
+
+Every LinkedIn door carries a **connection note** drafted for that company and that person, in a
+text box with its character count. Select it, edit it, paste it: this app ships no JavaScript of
+its own (SPEC §3), so there is no copy button, and a box you can select out of is the control that
+works anyway. An email door carries none: its draft travels inside the `mailto:`, so there is
+nothing to copy out.
 
 **Ask for the founder first and the recruiter last.** That inverts the usual advice on purpose and
 the corpus is the argument: 866 of these companies name a founder, and exactly 2 of the 17,172
@@ -1007,7 +1031,7 @@ the one you rewrite after every ten sends. Six keys:
 | `email.body` | body of the same draft. May name `{company}`. |
 | `linkedin.note` | the connection-request draft. May name `{company}` and `{person}`. |
 | `contact_priority` | who to ask for, best first: `founder`, `exec`, `eng_lead`, `recruiter`. |
-| `role_address_prefixes` | local parts that mark an address as a shared inbox, written without an `@`. |
+| `role_address_prefixes` | local parts that mark an address as a shared inbox, written without an `@`. The mark is also the rank: an address matching one is offered *below* a named human in **How to reach them**, so adding a prefix demotes that company's `mailto:` and removing one promotes it. Nothing is ever hidden either way. |
 | `entity_markers` | words that prove a stored "person" is a legal entity rather than a human. |
 
 **The shipped drafts are a starting point, and one of them is deliberately unfinished.** They are
@@ -1028,8 +1052,15 @@ cut mid-sentence is one you have to rewrite before pasting.
 The email has a softer ceiling of its own. The whole `mailto:` URL is percent-encoded, which adds
 about half again to its length, and mail clients start truncating somewhere near 2,000 characters
 — silently, and at the end, which is where the ask is. So the URL is built to a hard 1,900 with
-the subject held to a small share of it and the body absorbing any cut. The shipped body is 760
-characters and builds a URL of about 1,200, so in practice nothing is cut at all.
+the subject held to a small share of it and the body absorbing any cut. The shipped body is 722
+characters, and across the 446 published addresses in this database it builds a URL of 1,113 to
+1,262 characters (median 1,136, measured 2026-09-09), so in practice nothing is cut at all.
+
+Keep an edited body under **1,000 characters**. That is not the arithmetic ceiling — it is the
+one that holds whatever name it is handed. Measured against the shipped draft's punctuation, the
+longest body that survives intact is 1,153 characters for this corpus's longest company name and
+1,067 if the subject also runs to its own cap; a body written to "about 1,200" is therefore cut
+for some companies and not others, which is the worst way to find out.
 
 Like every config file here it is read once per process, so an edit takes effect on the next
 restart — `docker compose restart app`, or natively
@@ -1046,26 +1077,37 @@ composes with everything else, so `/?has_email=1&metro=<a+region>` is the list o
 region you could write to this afternoon.
 
 It is opt-in and off by default like every other checkbox in that row, and that matters more here
-than elsewhere: ticking it takes 9,220 companies down to 31. The 9,189 it leaves out are not
-unreachable, they are the ones you reach through the LinkedIn door above — so read it as "I am in
-the mood to write email", not as a definition of who is worth contacting.
+than elsewhere: on 2026-09-09 ticking it took 10,219 companies down to 397. The 9,822 it leaves
+out are not unreachable, they are the ones you reach through the LinkedIn door above — so read it
+as "I am in the mood to write email", not as a definition of who is worth contacting.
 
 ### More addresses: the `hn_hiring` backfill
 
-Where those 31 addresses came from is the argument for the last knob of this phase. 25 of them
-came out of a single Hacker News "Who is hiring?" thread, and 22 of those are a person's own
-address — somebody who published it asking to be written to. The other 9 were crawled off company
-sites, and 8 of those are an `info@` or a `jobs@`. That thread is where the good addresses are,
-and this app has read exactly one month of a thread that has run monthly for years.
+Where those 446 addresses came from is the argument for the last knob of this phase. 437 came out
+of Hacker News "Who is hiring?" comments, and 305 of those are a person's own address — somebody
+who published it asking to be written to. The other 9 were crawled off company sites, and every
+one of the 9 is an `info@`, a `jobs@` or a `careers@`. That thread is where the good addresses
+are, and it has run monthly for years.
 
 `options.max_threads` for `hn_hiring` in `config/connectors.yaml` decides how many of those
 threads one run reads, newest first, and it ships at **3** threads. Not one: the cadence fires at
 09:00 UTC, this machine is usually asleep then ([Keeping it running](#keeping-it-running-launchd)),
 and the connector only ever reads the *newest* threads — so a month missed at one thread is a
 month lost for good, while three covers two missed runs. Measured on a single thread
-(2026-09-09): 273 comments, 87 of them naming a city `config/regions.yaml`
-knows — it would have been 53 before [the aliases](#aliases) — 89 companies, 25 published
-addresses.
+(2026-09-09, `fetch_runs` id 7): 283 comments read, 87 of them naming a city
+`config/regions.yaml` knows — it would have been 53 before [the aliases](#aliases) — 89 companies
+upserted, 25 published addresses.
+
+The 283 is the run's own `n_fetched`, which for this connector is one per top-level comment it
+fetched, and it is ten more than the 273 [the aliases section](#aliases) counts for the same
+thread: that one was measured off the live source a day earlier, on 2026-09-08, and a monthly
+thread gains comments all month. Two measurements of a moving thread, not a discrepancy. The 87
+and the 25 were counted during the run and cannot be re-derived from the database now — the
+24-thread backfill below re-upserted those contact rows onto its own `sources`.
+
+**The backfill has already been run against this database**, once, at 24 threads on 2026-09-09 —
+which is why every count in this section is what it is rather than what one thread left. Raise the
+cap the same way to repeat it on a new machine, or two years from now:
 
 ```sh
 # config/connectors.yaml, under hn_hiring.options:  max_threads: 24
@@ -1074,11 +1116,22 @@ launchctl kickstart -k gui/$(id -u)/local.startup-tracker.scheduler   # ...so th
                                          # (under Compose: docker compose restart scheduler)
 ```
 
-Twenty-four threads is about two years and roughly 6,500 comments, which at the configured
-5 requests/second and 400 comments per thread is a 30-40 minute run. Companies repeat from month
-to month, so expect on the order of 100-200 *unique* companies with a direct address rather than
-24 times 89 — several times today's 31, and of the kind that answers. `python cli.py stats` before
-and after says what actually landed: the `contacts` line splits published from constructed.
+Twenty-four threads is about two years, which at the configured 5 requests/second and
+400 comments per thread is a run of roughly half an hour. What the run here actually cost and
+returned, from its `fetch_runs` row (visible at `/runs`) and from `cli.py stats` either side of it:
+
+| the 24-thread run, 2026-09-09 | before → after |
+|---|---|
+| wall clock | 30 minutes, 8,504 comments read, 2,811 company records upserted |
+| companies | 9,220 → **10,219** |
+| companies with an address they published | 31 → **397**, 391 of them carrying an `hn_hiring` address |
+| published addresses | 34 → **446**, 305 of them a named person's own |
+| months of the thread stored | 1 → **24**, 2024-10 through 2026-09 |
+
+Companies repeat heavily from month to month, so the unique-company yield is nothing like 24 times
+89 — but it is the kind that answers, since a person who posts their own address in that thread has
+opted into being written to. `python cli.py stats` before and after is what says what actually
+landed: the `contacts` line splits published from constructed.
 
 Three things to know before you leave it raised:
 
@@ -1092,8 +1145,9 @@ Three things to know before you leave it raised:
   at each monthly fire. Put it back to 3 once the backfill has landed, unless you want the re-read.
 
 **Do not raise `company_site`'s `max_companies_per_run` chasing the same end.** It is the obvious
-move and the measurement says it is the wrong one: crawling more careers pages yields more `info@`,
-8 times in 9. Leave that connector to what it is good at, which is careers pages and ATS tokens.
+move and the measurement says it is the wrong one: crawling more careers pages yields more `info@`
+— all 9 of the addresses it has found are a shared inbox, against 305 of 437 from the thread that
+are not. Leave that connector to what it is good at, which is careers pages and ATS tokens.
 
 ## Development
 

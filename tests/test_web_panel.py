@@ -25,15 +25,20 @@ reader keeps and ``/company/{id}/panel`` is the fragment the list opens, and §9
 "a standalone, linkable version of" the second.
 
 The third group is what SPEC §12 Phase 8 put *above* both of those, and it starts by asserting
-the panel's section order the other way round from the way this file used to. One open role in
-1,682 here is part-time, because a startup does not advertise part-time work — it invents it
+the panel's section order the other way round from the way this file used to. Two open roles in
+5,032 here are part-time, because a startup does not advertise part-time work — it invents it
 when a specific person asks — so the row leads with a human to write to and keeps the roles
 table below as evidence of budget rather than as things to apply to. Two doors follow from that
 and both are asserted here: the published address, now a draft you can send rather than a sixth
-link in a list, and — for the 9,189 companies of 9,220 that publish no address at all — the best
+link in a list, and — for the 9,822 companies of 10,219 that publish no address at all — the best
 LinkedIn door the stored rows support, which makes it the main path and not a fallback. Nothing
 in either is fetched: the profile URL was published on the company's own site, the search URLs
 are constructed from its name (§6), and the note is text the reader pastes (§2, §4).
+
+Every corpus count in this file is measured against the live database on 2026-09-09 and is prose,
+never an assertion: a test may not read that database (the fixtures drop the public schema), so a
+figure here is a dated note for the reader and moves whenever a connector runs. ``cli.py stats``
+is the live number.
 
 The cursor tests at the end belong to the same file only in that they are the other thing a
 hand-edited URL can do: a ``k`` carrying a NUL or a lone surrogate used to reach the driver and
@@ -70,6 +75,21 @@ from tests.support_web import (
 )
 from web.labels import label_for
 from web.templating import MAILTO_MAX_URL
+
+#: How far under :data:`web.templating.MAILTO_MAX_URL` the shipped draft must land when it is
+#: rendered for this file's fixture company.
+#:
+#: A margin rather than the ceiling itself, because the ceiling cannot fail: ``mailto_url`` cuts
+#: the body to fit, so ``len(href) <= MAILTO_MAX_URL`` is true of a mangled draft too. What can
+#: fail is the draft growing until a *real* company name pushes it over — and the fixture's name
+#: is short, so a URL that only just fits here is already cut for somebody.
+#:
+#: 400 is where that lands. The tightest real ceiling for the shipped body's punctuation is a
+#: 1,067-character raw body (the subject at its own cap; ``tests/test_outreach_config.py``
+#: measures this and budgets 1,000 against it). Growing the body from today's 722 to ~964 raw is
+#: what pushes this fixture's URL past ``MAILTO_MAX_URL - 400`` — so this fires just before that
+#: budget does, and both fire before anything is actually truncated.
+MAILTO_HEADROOM = 400
 
 #: Every ``<th aria-sort=...>`` of a rendered roles table, in column order.
 _ARIA_SORT = re.compile(r'<th scope="col" aria-sort="([a-z]+)"')
@@ -722,9 +742,9 @@ def drafted_note(section: Node) -> str:
 #: Written out whole rather than as the one pair of indices that changed, because the whole list
 #: is what a reader meets and the two sections that moved are only meaningful against the six
 #: that did not. Phase 4 left this order with "Open roles" fourth and "Contacts" fifth; the
-#: inversion is the phase, and the reason is measured: 1 of 1,682 open roles in this database is
-#: part-time, so a row that leads with a roles table leads with the thing that cannot serve the
-#: reason the app exists.
+#: inversion is the phase, and the reason is measured: 2 of 5,032 open roles in this database are
+#: part-time (2026-09-09), so a row that leads with a roles table leads with the thing that cannot
+#: serve the reason the app exists.
 PANEL_SECTIONS = (
     "About",
     "Locations",
@@ -986,7 +1006,7 @@ async def test_a_published_email_is_a_button_carrying_a_drafted_message(
 ) -> None:
     """SPEC §12 Phase 8's email door: the row's primary action, with the pitch already written.
 
-    31 of 9,220 companies here publish an address, so where one exists it is worth more than a
+    397 of 10,219 companies here publish an address, so where one exists it is worth more than a
     small link in a list of six — the button opens a composed draft and the plain address stays
     beside it, because the button is what you send with and the text is what you copy and what
     tells you who you are about to write to.
@@ -997,6 +1017,13 @@ async def test_a_published_email_is_a_button_carrying_a_drafted_message(
     make rewriting it a code change — which is exactly what CLAUDE.md's "edit YAML, not Python"
     rules out. What is pinned is that the panel sends *that* file's subject and body, with the
     company filled in, inside a URL a mail client will not silently truncate.
+
+    That last clause is checked with headroom rather than with the ceiling itself. ``mailto_url``
+    builds the href as ``prefix + quote_to_fit(body, MAILTO_MAX_URL - len(prefix))``, so
+    ``len(href) <= MAILTO_MAX_URL`` holds by construction — it is true of a draft that was cut in
+    half just as much as of one that fits, which makes it an assertion that cannot fail. The body
+    comparison above is what actually catches a cut; the margin below is what catches the shipped
+    pitch *drifting toward* one, while there is still room to notice.
     """
     outreach = load_outreach_config()
     groups = contact_groups(await detail_html(client, detail_url, contacts.rich))
@@ -1008,7 +1035,14 @@ async def test_a_published_email_is_a_button_carrying_a_drafted_message(
     assert address == HR_EMAIL
     assert draft["subject"] == [outreach.email_subject.format(company=RICH_NAME)]
     assert draft["body"] == [outreach.email_body.format(company=RICH_NAME)]
-    assert len(anchor.attributes.get("href") or "") <= MAILTO_MAX_URL
+
+    href = anchor.attributes.get("href") or ""
+    assert len(href) <= MAILTO_MAX_URL - MAILTO_HEADROOM, (
+        f"the shipped draft builds a {len(href)}-character mailto: for a company named "
+        f"{RICH_NAME!r}, within {MAILTO_MAX_URL - len(href)} of the {MAILTO_MAX_URL} ceiling. "
+        "A longer company name than this fixture's would be cut, and the cut lands at the end "
+        "of the body, which is where the ask is — shorten config/outreach.yaml's email.body"
+    )
 
     # The address is text beside the button, not the button's own label: a row that linked the
     # address and said nothing else would be the pre-Phase-8 row with a class on it.
@@ -1022,10 +1056,10 @@ async def test_a_shared_inbox_is_marked_a_personal_one_is_not_and_neither_is_hid
     """SPEC §12 Phase 8's hint, and SPEC §7.1's rule that classification never excludes.
 
     ``careers@`` is a ticket queue and a scoped personal offer converts close to zero in one, so
-    the reader is told which kind of address they are about to spend a draft on — measured, 8 of
-    the 9 addresses crawled off company sites are queues and 22 of the 25 found in "Who is
-    hiring?" comments are a named person's own. Both halves are asserted, because a hint that
-    appeared on every row would distinguish nothing.
+    the reader is told which kind of address they are about to spend a draft on — measured on
+    2026-09-09, all 9 of the addresses crawled off company sites are queues and 305 of the 437
+    found in "Who is hiring?" comments are a named person's own. Both halves are asserted,
+    because a hint that appeared on every row would distinguish nothing.
 
     And then the part that makes it a hint rather than a filter: neither row loses its address
     or its draft button. §7.1 is about role families, but the rule it states is general, and
@@ -1232,6 +1266,25 @@ OVERLONG_PERSON = "Ada Vance"
 #: non-ASCII letter is not a byte a URL may carry at all.
 PUNCTUATED_NAME = 'Ampersand & Söhne "Labs"'
 PUNCTUATED_EMAIL = "ada@ampersand-soehne.example"
+#: A name ending in a full stop — ``Inc.``, ``Ltd.``, ``Co.`` — which is how thousands of company
+#: names are really written. Nothing else in this suite ends one in punctuation, which is how a
+#: note template with ``{company}`` as its last word shipped rendering a doubled period.
+ABBREVIATED_NAME = "Northwind Robotics, Inc."
+ABBREVIATED_PERSON = "Ida Okafor"
+#: A company that published a queue and named nobody — the fourth-ranked door, and the second
+#: most common one in the live database: 118 of the 397 companies with an address publish only
+#: shared inboxes, and 112 of those name nobody at all, so this is what they lead with.
+QUEUE_ONLY_NAME = "Halyard Systems"
+QUEUE_ONLY_EMAIL = "jobs@halyard-systems.example"
+#: A name carrying a line break in the middle, copied from the shape of a real stored row: a
+#: "Who is hiring?" comment whose leading line broke where the connector read it. SPEC §2 keeps
+#: what the source said, so the panel is what has to cope.
+BROKEN_NAME = "June 2025\nProphet Town Labs"
+BROKEN_PERSON = "Theo Marsh"
+#: Deliberately a shared inbox. It keeps the company's published address — so the ``mailto:`` in
+#: the Contacts row is there to inspect — while demoting the outreach door to ``person_search``,
+#: which is the door that renders a note. One company, both halves of the same bug.
+BROKEN_EMAIL = "careers@prophet-town.example"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1242,12 +1295,19 @@ class DoorFixture:
     EDGAR filing entity ranked above a real human, which is the guard; ``overlong`` has a name
     long enough to overrun the connection-note cap; ``punctuated`` has a name that has to survive
     percent-encoding into a ``mailto:``.
+
+    The last two are about names as they are really *stored* rather than as they are really
+    written: ``abbreviated`` ends in a full stop, and ``broken`` carries a line break in the
+    middle. Both are shapes the live database holds and this suite otherwise never produced.
     """
 
     nameless: int
     filed: int
     overlong: int
     punctuated: int
+    abbreviated: int
+    broken: int
+    queue_only: int
 
 
 @pytest.fixture
@@ -1288,12 +1348,37 @@ async def doors(session: AsyncSession) -> DoorFixture:
         value=PUNCTUATED_EMAIL,
         confidence=enums.ContactConfidence.PUBLISHED,
     )
+    abbreviated = await make_company(session, ABBREVIATED_NAME, domain="northwind-robotics.example")
+    await make_person(session, abbreviated.id, ABBREVIATED_PERSON, title="Founder")
+
+    broken = await make_company(session, BROKEN_NAME, domain="prophet-town.example")
+    await make_person(session, broken.id, BROKEN_PERSON, title="Founder")
+    await make_contact(
+        session,
+        broken,
+        kind=enums.ContactKind.EMAIL,
+        value=BROKEN_EMAIL,
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+
+    queue_only = await make_company(session, QUEUE_ONLY_NAME, domain="halyard-systems.example")
+    await make_contact(
+        session,
+        queue_only,
+        kind=enums.ContactKind.EMAIL,
+        value=QUEUE_ONLY_EMAIL,
+        confidence=enums.ContactConfidence.PUBLISHED,
+    )
+
     await session.commit()
     return DoorFixture(
         nameless=nameless.id,
         filed=filed.id,
         overlong=overlong.id,
         punctuated=punctuated.id,
+        abbreviated=abbreviated.id,
+        broken=broken.id,
+        queue_only=queue_only.id,
     )
 
 
@@ -1483,6 +1568,104 @@ async def test_a_company_name_full_of_punctuation_survives_into_the_mailto(
     assert "%26" in href and "%22" in href and "%C3%B6" in href
     # Exactly one ampersand left in the whole URL: the separator this function wrote itself.
     assert href.count("&") == 1
+
+
+async def test_a_queue_is_still_the_door_when_it_is_the_only_one_and_is_marked_as_a_queue(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """The fourth-ranked door: a shared inbox that nothing outranks (SPEC §12 Phase 8).
+
+    A queue is demoted below a named human, not discarded — so a company that published only
+    ``jobs@`` and names nobody still leads with that address, because it is genuinely the best way
+    in that this database holds for it. Measured on 2026-09-09, that is 112 of the 397 companies
+    with an address, which makes this the second most common door in the corpus and the one branch
+    of the outreach block that no other case here reaches.
+
+    The mark is a **chip**, not a confidence badge, and that is the assertion worth making.
+    ``.badge.published`` / ``.badge.constructed`` are SPEC §6's provenance pair — they say whether
+    the company published a contact or this app constructed it — and this address *was* published.
+    Rendering "general inbox" as ``badge constructed`` (which it was) tells the reader this app
+    invented an address the company printed itself, and contradicts the ``Published`` badge on the
+    very same address one section below.
+    """
+    markup = await detail_html(client, detail_url, doors.queue_only)
+    section = outreach_section(markup)
+    button = door_button(section)
+
+    assert squashed(button) == "Draft an email →"
+    assert mailto_parts(button)[0] == QUEUE_ONLY_EMAIL
+    assert "general inbox" in squashed(section) and "direct" not in squashed(section)
+
+    # Nothing is hidden by the demotion: the address is still its own contact row, still badged
+    # `Published`, still carrying its own draft button (SPEC §7.1, §6).
+    row = email_row(contact_groups(markup), QUEUE_ONLY_EMAIL)
+    assert '<span class="badge published">Published</span>' in (row.html or "")
+    assert "badge constructed" not in (section.html or ""), section.html
+
+
+async def test_a_name_ending_in_a_full_stop_does_not_double_the_note_s_period(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """``{company}`` may not be the last thing in a sentence of ``linkedin.note``.
+
+    A great many company names end in a full stop — ``Inc.``, ``Ltd.``, ``Co.`` — and a template
+    that puts ``{company}`` immediately before its own period renders ``... Northwind Robotics,
+    Inc..`` for every one of them. Measured over the live corpus when this was found, 9,103 of
+    16,117 company-and-person pairs rendered a doubled period; the fix was to reword the note so a
+    word follows ``{company}``, and this is what keeps it reworded.
+
+    Asserted on the *rendered* note rather than on the template, because the template is config
+    and may be rewritten freely — what may not change is that the rewrite still reads correctly
+    for a name the corpus is full of. That is also why the check is a property of the output and
+    not a comparison against fixed prose: CLAUDE.md's "edit YAML, not Python" means this file
+    must not spell the pitch out.
+    """
+    section = outreach_section(await detail_html(client, detail_url, doors.abbreviated))
+    note = drafted_note(section)
+
+    assert ABBREVIATED_NAME in note, "the fixture's name is not in its own draft"
+    assert ".." not in note, (
+        f"the drafted note reads {note!r}. A company name ending in a full stop is doubling the "
+        "one after it — move a word after {company} in config/outreach.yaml's linkedin.note"
+    )
+
+
+async def test_a_line_break_in_a_stored_name_never_reaches_a_draft(
+    client: httpx.AsyncClient, doors: DoorFixture, detail_url: Callable[[int], str]
+) -> None:
+    """A company name is scraped text, and this one is stored with a newline inside it.
+
+    The ``mailto:`` is where that matters. ``{company}`` is interpolated into the **subject**, a
+    newline percent-encodes to ``%0A``, and the mail client decodes it back when it composes the
+    draft — putting a line break into a Subject header, from a value that came off a third-party
+    page. :func:`web.templating._mail_address` already refuses whitespace on the address half of
+    the same URL for exactly that reason; :func:`web.templating.draft_name` is the other half.
+
+    The note is the milder half of the same bug and is asserted too: a two-line company name in a
+    connection request is merely wrong, but it is wrong in a box the reader pastes from.
+
+    The name is not *rejected* anywhere — SPEC §2 keeps what the source said, and the row is still
+    that company — so the last assertion is that both words survive the folding.
+    """
+    markup = await detail_html(client, detail_url, doors.broken)
+
+    section = outreach_section(markup)
+    note = drafted_note(section)
+    assert "\n" not in note and "\r" not in note, repr(note)
+
+    (anchor,) = email_row(contact_groups(markup), BROKEN_EMAIL).css("a")
+    href = anchor.attributes.get("href") or ""
+    _address, draft = mailto_parts(anchor)
+    subject = draft["subject"][0]
+
+    # The *subject* only. The body carries `%0A` by design — `config/outreach.yaml` folds its
+    # paragraphs — and a newline is unremarkable in a body and a header split in a header.
+    raw_subject = href.partition("?subject=")[2].partition("&body=")[0]
+    assert "%0A" not in raw_subject.upper(), f"a newline reached the Subject header — {href!r}"
+    assert "\n" not in subject and "\r" not in subject, repr(subject)
+    # Folded to one space, not deleted: this is still that company's name.
+    assert "June 2025 Prophet Town Labs" in subject
+    assert "June 2025 Prophet Town Labs" in note
 
 
 # ------------------------------------------------- a cursor key the driver cannot bind (§9)

@@ -11,8 +11,9 @@
     8. the inline note + status + rating control
 
   Sections 4 and 5 sit above the roles table rather than below it, and that inversion is the
-  whole of Phase 8: 1 of 1,682 open roles in this database is part-time, because a startup does
-  not advertise part-time work — it invents it when a specific person asks. So what the row
+  whole of Phase 8: 2 of 5,032 open roles in this database are part-time (measured 2026-09-09),
+  because a startup does not advertise part-time work — it invents it when a specific person
+  asks. So what the row
   leads with is a reachable human and a first draft, and the roles below it are evidence that
   there is budget and unmet need rather than things to apply to.
 
@@ -138,11 +139,11 @@
 {#- 4. How to reach a human ---------------------------------------------------------------- #}
 {#- SPEC §12 Phase 8's outreach block, and the reason both contact blocks now sit above the
     roles table. `door` is `web.routes.companies.best_outreach_door`: the most specific of the
-    three doors the stored rows support — a profile the company itself published, a search
-    scoped to one named person, or a search across the whole company — or None when it supports
-    none of them. The three are told apart here in words rather than by a rank, because the
-    reader is the one deciding whether a door is worth a draft, and "a company nobody here is
-    named at" is a different proposition from "here is the founder, by name".
+    four doors the stored rows support — an address the company published, a profile it
+    published, a search scoped to one named person, or a search across the whole company — or
+    None when it supports none of them. The four are told apart here in words rather than by a
+    rank, because the reader is the one deciding whether a door is worth a draft, and "a company
+    nobody here is named at" is a different proposition from "here is the founder, by name".
 
     Nothing in this block fetches anything and nothing is sent for you (SPEC §2, §4): the
     profile URL is one the company published on its own site, the search URLs are constructed
@@ -153,16 +154,23 @@
   {%- if door %}
   {#- The address the company published, with the whole draft already inside the `mailto:`.
       It outranks every LinkedIn tier when it reaches a person, and is demoted below a named
-      human when it is a shared inbox — so a `direct` badge here means "write to this first"
-      and a `general inbox` one means "this was the best that was published". -#}
+      human when it is a shared inbox — so a `direct` chip here means "write to this first"
+      and a `general inbox` one means "this was the best that was published".
+
+      Chips, not badges, and the same chips section 5 puts on the same two kinds of address.
+      `.badge.published` / `.badge.constructed` are SPEC §6's provenance pair — they say whether
+      the *company* published a contact or this app built it — and every address that reaches
+      this branch was published, shared inbox or not. Spending `.badge.constructed` on one would
+      tell the reader we invented an address the company itself printed, and would contradict the
+      `Published` badge on that very address one section below. -#}
   {%- if door.kind == 'email' %}
   <p><strong>{{ door.person }}</strong>
     {%- if door.person | shared_inbox %}
-    <span class="badge constructed">general inbox</span>
+    <span class="chip">general inbox</span>
     <span class="muted">&mdash; the only address on file is a shared one, so the draft is worth
       rewriting before you send it.</span>
     {%- else %}
-    <span class="badge published">direct</span>
+    <span class="chip">direct</span>
     <span class="muted">&mdash; a personal address the company published itself.</span>
     {%- endif %}
     <a class="button" href="{{ door.url }}">Draft an email →</a></p>
@@ -226,7 +234,8 @@
   <span class="muted">{{ contact.kind | label }}</span>
   {%- if contact.kind == 'email' %}
   {#- The email door (SPEC §12 Phase 8). A published address is the one door that lands directly
-      in somebody's inbox, and 31 of 9,220 companies here have one, so where it exists it is the
+      in somebody's inbox, and 397 of 10,219 companies here have one (measured 2026-09-09, after
+      the `hn_hiring` backfill), so where it exists it is the
       row's primary action rather than a small link: the button opens a draft already carrying
       the subject and body from `config/outreach.yaml`, and the address stays beside it as plain
       text, which is what you copy and what tells you who you are about to write to.
@@ -243,11 +252,12 @@
   <a class="button" href="{{ draft }}">Draft an email →</a>
   {%- endif %}
   {{ contact.value }}
-  {#- Display only, and it hides nothing (§7.1 "classification never excludes"): `info@` is a
-      ticket queue and the scoped personal offer this app drafts converts close to zero in one,
-      so the reader gets to weigh the door before spending a draft on it. The vocabulary is
-      `role_address_prefixes` in config/outreach.yaml; deleting a prefix deletes the hint and
-      never the row. -#}
+  {#- It hides nothing (§7.1 "classification never excludes"): `info@` is a ticket queue and the
+      scoped personal offer this app drafts converts close to zero in one, so the reader gets to
+      weigh the door before spending a draft on it. Every address keeps its row and its draft
+      button either way. The vocabulary is `role_address_prefixes` in config/outreach.yaml, and
+      editing it is not free elsewhere: section 4 ranks with the same predicate, so deleting a
+      prefix here also promotes that company's `mailto:` to the door it leads with. -#}
   {%- if contact.value | shared_inbox %}
   <span class="chip">general inbox</span>
   {%- else %}

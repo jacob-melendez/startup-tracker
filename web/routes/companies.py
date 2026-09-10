@@ -68,7 +68,14 @@ from web.filters import (
     role_sort_links,
 )
 from web.labels import CONTACT_KIND_ORDER, label_for
-from web.templating import mailto_url, next_page_url, safe_url, shared_inbox, templates
+from web.templating import (
+    draft_name,
+    mailto_url,
+    next_page_url,
+    safe_url,
+    shared_inbox,
+    templates,
+)
 
 router = APIRouter()
 
@@ -400,11 +407,11 @@ class OutreachDoor(NamedTuple):
 def best_outreach_door(company: Company, *, outreach: OutreachConfig) -> OutreachDoor | None:
     """The most specific door this company offers, or ``None`` when it offers none.
 
-    **This is the main path, not a fallback.** 31 of 9,220 companies in this database publish an
-    email address, so for practically every row the LinkedIn door is the only door, and the panel
-    has to make it worth opening: who to write to, a link that lands on them, and a note already
-    drafted. The three tiers of :class:`OutreachDoor` are that, in descending order of how much
-    the database happens to know.
+    **This is the main path, not a fallback.** 397 of 10,219 companies in this database publish an
+    email address (measured 2026-09-09, after the ``hn_hiring`` backfill), so for the other 9,822
+    the LinkedIn door is the only door, and the panel has to make it worth opening: who to write
+    to, a link that lands on them, and a note already drafted. The three LinkedIn tiers of
+    :class:`OutreachDoor` are that, in descending order of how much the database happens to know.
 
     Who to ask for is ``contact_priority`` from ``config/outreach.yaml`` — founder before
     recruiter, which inverts the usual advice on purpose and for a measured reason: these
@@ -421,7 +428,11 @@ def best_outreach_door(company: Company, *, outreach: OutreachConfig) -> Outreac
     themselves. It is also a pure function over data already loaded: ``_DETAIL_OPTIONS`` eager-loads
     ``people`` and ``contacts`` for the panel, so choosing a door costs no query.
     """
-    name = company.name.strip()
+    # Folded, not merely stripped: a stored name can carry a newline in the middle (SPEC §2 keeps
+    # what the source said), and this one goes into the drafted note and into the `mailto:`
+    # subject. `web.templating.draft_name` is the single definition of that fold, so the note the
+    # panel shows and the subject the mail client composes cannot disagree about the name.
+    name = draft_name(company)
     candidates = _people_worth_messaging(company.people, outreach)
     personal, shared = _published_emails(company.contacts)
 
@@ -462,10 +473,17 @@ def _published_emails(contacts: Sequence[Contact]) -> tuple[list[str], list[str]
     """The company's published addresses, split into the ones that reach a person and the ones
     that reach a queue — in :data:`_KIND_RANK` order so the door is stable between two renders.
 
-    The split is the whole point rather than a nicety. Measured on this database, 8 of the 9
-    addresses crawled off company sites are a shared inbox and 22 of the 25 found in "Who is
-    hiring?" comments are somebody's own — so treating the two alike would rank a support queue
-    above a named founder for exactly the companies where that is the wrong call.
+    The split is the whole point rather than a nicety. Measured on this database on 2026-09-09,
+    **all 9** of the addresses crawled off company sites are a shared inbox, while 305 of the 437
+    found in "Who is hiring?" comments are somebody's own — so treating the two alike would rank a
+    support queue above a named founder for exactly the companies where that is the wrong call.
+
+    The company-site half of that reads 9 of 9 rather than the 8 of 9 this phase was planned
+    against, and it moved without a single row changing: those 9 addresses predate the backfill
+    and none of them was touched by it. What moved is the vocabulary — ``recruiting@`` and two
+    ``accommodations@`` are shared inboxes that the shipped ``role_address_prefixes`` recognises
+    and a shorter list does not. A reader who re-derives this split and gets a different number
+    should check the prefix list before concluding the corpus drifted.
 
     Constructed contacts are not considered at all: there is no such thing as a constructed
     email in this system (SPEC §6 forbids guessing an address), so anything here was published.

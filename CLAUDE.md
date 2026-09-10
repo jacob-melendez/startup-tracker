@@ -50,8 +50,9 @@ v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app,
   `cli.py sync-regions` to relabel what is already stored (§11, §12 Phase 7).
 - `config/seed_companies.yaml` bootstraps; never hardcode ATS tokens — connector discovery finds them (§4, §10).
 - `config/outreach.yaml` holds the outreach pitch — the email subject and body, the LinkedIn note, the
-  founder-first `contact_priority`, and the two guard lists that mark a shared inbox and keep a filing
-  entity from being offered as a person to message. The pitch is the thing most worth iterating on, so
+  founder-first `contact_priority`, and the two guard lists that rank a shared inbox below a named human
+  and keep a filing entity from being offered as a person to message. Both lists reorder the offered door
+  and neither hides an address or a company (§7.1). The pitch is the thing most worth iterating on, so
   it is config and never code; the 300-character LinkedIn cap is enforced at load, not at render (§6,
   §12 Phase 8).
 

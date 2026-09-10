@@ -309,7 +309,8 @@ be read — including the contact addresses they put in them (SPEC §6).
 * **5 requests/second**; one monthly run reads `options.max_threads` threads, newest first — 3 as
   shipped, because the run is scheduled for an hour this machine is usually asleep and a missed
   month is otherwise lost for good — and up to `options.max_comments_per_thread` (400) comments
-  from each. The archive was backfilled once at 24; see the README's Contacts section.
+  from each. The archive was backfilled once at 24; see the README's Outreach section, under
+  "More addresses: the `hn_hiring` backfill".
 * `robots.txt` disallows `/` but allows `/*.json$` — exactly the URLs this connector builds, and
   the shared client enforces that per RFC 9309 (a `$`-anchored `Allow` the older `urllib` parser
   would have ignored).
@@ -393,10 +394,16 @@ through, so one address cannot become two rows for the same company (SPEC §6).
   the wrong metro. The name belongs in the same file its code does, and that is now where it is
   read from. Omitting `state_name` costs a mention a rank and never a record, since only the
   two-letter veto above ever discards one.
-* **A link is not taken as the company's domain when it points at a job board or document
-  host** (`options.ignore_link_hosts`: Greenhouse, Lever, Ashby, Workable, Deel, Workday,
-  Notion, Google Docs, LinkedIn, GitHub …). Keying a company on `app.deel.com` would merge every
-  Deel customer into one row; such a company is resolved by name within its metro instead.
+* **A link is not taken as the company's domain when it belongs to a platform rather than to the
+  poster** (`options.ignore_link_hosts`). Five kinds, and reading the archive at once is what
+  turned the last three from theory into measured rows: applicant tracking systems and job
+  marketplaces (Greenhouse, Lever, Ashby, Workable, Deel, Workday, Dover, Wellfound …), document
+  and form hosts (Notion, Google Docs, Airtable, Tally …), **URL shorteners** (`bit.ly`,
+  `lnkd.in`, `grnh.se`), **per-tenant page hosts** where the label in front of the domain is the
+  tenant and not the company (`github.io`), and social, community and press sites (LinkedIn,
+  GitHub, Product Hunt, arXiv …). Keying a company on `app.deel.com` would merge every Deel
+  customer into one row — one live row had swallowed 14 companies through a marketplace before
+  the host was blocked — and such a company is resolved by name within its metro instead.
 * `jobs_complete` is **false**: a comment is a slice of a company's openings, so nothing here
   ever closes a job another connector reported.
 * One comment advertises several roles, so the comment body is deliberately not used to infer

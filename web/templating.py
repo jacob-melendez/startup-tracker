@@ -21,6 +21,7 @@ any of them read off the disk are ``config/regions.yaml``, for :func:`site_name`
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,9 @@ SAFE_SCHEMES = frozenset({"http", "https"})
 #: past a naive prefix check. They are removed before the scheme is inspected *and* from the
 #: value that is returned, so what is validated is what is rendered.
 _URL_STRIPPED_CHARS = str.maketrans("", "", "\t\r\n")
+#: Any run of whitespace, folded to one space by :func:`draft_name` before a scraped company name
+#: reaches a ``mailto:`` subject or a drafted note.
+_WHITESPACE = re.compile(r"\s+")
 
 #: The query parameter that is dropped from every generated link — see :func:`query_string`.
 CURSOR_PARAM = "cursor"
@@ -124,12 +128,14 @@ def mailto_url(address: object, company: object) -> str:
     ``company`` fills the templates' ``{company}`` placeholder and may be given as the name or as
     the company row itself — the template that calls this filter holds the row, and a
     ``str(company)`` that quietly rendered ``<db.models.Company object at 0x…>`` into a subject
-    line would be found by the recipient rather than by a test.
+    line would be found by the recipient rather than by a test. :func:`draft_name` reads it, and
+    folds the whitespace a scraped name can carry before it reaches the Subject header.
 
     The whole URL is held to :data:`MAILTO_MAX_URL` characters. The body absorbs almost all of
     any cut — the subject has its own small :data:`_MAILTO_SUBJECT_MAX` so that one absurdly long
-    company name cannot spend the budget before the body is reached — and the shipped draft
-    builds a URL of about 1,240, so in practice nothing is cut at all.
+    company name cannot spend the budget before the body is reached — and over the 446 published
+    addresses this database holds the shipped draft builds a URL of 1,113 to 1,262 characters
+    (median 1,136, measured 2026-09-09), so in practice nothing is cut at all.
 
     ``""`` for anything that is not an address, so a template can guard with
     ``{% if href %}`` exactly as it does around :func:`safe_url`.
@@ -138,7 +144,7 @@ def mailto_url(address: object, company: object) -> str:
     if target is None:
         return ""
     outreach = load_outreach_config()
-    name = _company_name(company)
+    name = draft_name(company)
     subject = _quote_to_fit(outreach.email_subject.format(company=name), _MAILTO_SUBJECT_MAX)
     prefix = f"mailto:{target}?subject={subject}&body="
     return prefix + _quote_to_fit(
@@ -151,8 +157,16 @@ def shared_inbox(address: object) -> bool:
 
     ``info@``/``jobs@`` is a ticket queue, and the scoped personal offer this app drafts converts
     close to zero when it lands in one; the panel says which kind an address is so the reader can
-    weigh the door before spending a draft on it. **Display only** — nothing is hidden or dropped
-    on the strength of this, per SPEC §7.1's rule that classification never excludes.
+    weigh the door before spending a draft on it.
+
+    **Nothing is hidden or dropped on the strength of this** — every address is still rendered
+    with its own draft button and no company leaves the list, per SPEC §7.1's rule that
+    classification never excludes. It is not, however, display-only: this same predicate is the
+    ranking one in :func:`web.routes.companies._published_emails`, which is what demotes a shared
+    inbox below a named human in the panel's "How to reach them" (SPEC §12 Phase 8). Adding a
+    prefix here therefore reorders the door that company leads with; removing one promotes its
+    ``mailto:`` back above every LinkedIn tier. Measured 2026-09-09, that reordering reaches 6 of
+    the 397 emailable companies — the ones that publish only a shared inbox *and* name somebody.
 
     The comparison is against the local part *whole*, not a prefix scan, because that is what the
     configured vocabulary is (``ingest.config.OutreachConfig._bare_local_parts`` rejects anything
@@ -185,12 +199,30 @@ def _mail_address(value: object) -> str | None:
     return quote(candidate, safe=_MAILTO_ADDRESS_SAFE)
 
 
-def _company_name(value: object) -> str:
-    """The name to interpolate into a draft: the string itself, or the ``name`` of a row."""
+def draft_name(value: object) -> str:
+    """The company name as it may be interpolated into a draft: the string itself, or the ``name``
+    of a row, with every run of whitespace folded to one space and the ends trimmed.
+
+    The folding is not tidiness. A company name is scraped text — one row in this database is
+    stored as ``"June 2025\\nProphet Town"``, a "Who is hiring?" comment whose leading line broke
+    where the connector read it — and this name is interpolated into the ``mailto:`` **subject**.
+    A newline there is percent-encoded to ``%0A``, which the mail client decodes back into the
+    Subject header when it composes the draft: a header split, from a value that came off a
+    third-party page. :func:`_mail_address` already refuses whitespace on the address half of the
+    same URL and says why; this is the other half of that guard, and it holds for the connection
+    note too, where a two-line company name is merely wrong rather than dangerous.
+
+    Folded rather than rejected, because the name is still the right name — ``ingest`` stores what
+    the source said (SPEC §2 keeps the record honest) and the panel's job is to render it, not to
+    correct the row. Normalising here rather than in ``ingest`` is deliberate for the same reason:
+    the row already exists, so the panel has to handle it whatever a future validator does.
+    """
     if isinstance(value, str):
-        return value
-    name = getattr(value, "name", None)
-    return name if isinstance(name, str) else ""
+        name: str | None = value
+    else:
+        candidate = getattr(value, "name", None)
+        name = candidate if isinstance(candidate, str) else None
+    return _WHITESPACE.sub(" ", name).strip() if name is not None else ""
 
 
 def _quote_to_fit(text: str, budget: int) -> str:

@@ -604,9 +604,48 @@ def test_a_comment_from_a_second_metro_carries_that_metros_own_state_and_label(
         ("Apply: https://go.trymira.com/careers", "trymira.com"),
         ("https://acme.io", "acme.io"),
         ("no links at all", None),
+        # --- the hosts the 24-thread backfill surfaced, one live-shaped case each.
+        # Every one of these is the *only* link in its comment, so a host that fell out of
+        # ``ignore_link_hosts`` shows up here as a domain rather than as ``None``.
+        #
+        # A job marketplace SPEC §4 excludes as a source: the link is to a profile page, and the
+        # live row keyed on it had swallowed 14 different companies before the host was blocked.
+        ("Arya Health | Multiple Roles | https://wellfound.com/company/arya-health-ai/jobs", None),
+        # Its short-link host, same page behind a different shape.
+        ("PUNTT.ai | Founding AE | Full-time | https://wellfound.com/l/2BKuiN", None),
+        # An ATS on a subdomain — the ``endswith(f".{bad}")`` arm, not the equality one.
+        ("Better Off | Growth Marketing | https://app.dover.com/apply/Better%20Off/a327", None),
+        # A recruiting site whose links are one recruiter's referral URLs, not any company's site.
+        ("ResortPass | Senior SWE | https://uctalent.io/referral/Nhan221138/O-al4W", None),
+        # A form host: the form belongs to the platform and the company is nowhere in the host.
+        ("AES | Summer SWE Intern | REMOTE | https://tally.so/r/44pNxX", None),
+        # Shorteners. The target may well be the company's own site, but nothing here can see it
+        # and the connector must not fetch to find out (SPEC §2).
+        ("Mapistry | Full-stack Software Engineer | https://bit.ly/4n1fTVK", None),
+        ("Ascertain | Senior Engineers | https://lnkd.in/e5ZnGuqH", None),
+        # A per-tenant page host. ``github.io`` is never itself a hostname, so this case exists
+        # to exercise the subdomain arm: the tenant label in front of it is not a domain the
+        # company can be keyed on either.
+        ("Joulent | Founding ML Platform Engineer | https://joulent.github.io/careers/", None),
+        # A product-launch page and a preprint server: things a poster links as evidence, the way
+        # press coverage already is above.
+        ("Fathom - AI Notetaker | https://www.producthunt.com/products/fathom", None),
+        ("Palace Cybersecurity | Founding DL Engineer | https://arxiv.org/abs/2412.06700", None),
     ],
 )
 def test_only_a_plausible_company_link_becomes_the_domain(text: str, expected: str | None) -> None:
+    """Each blocked host resolves to ``None`` so the comment falls through to name resolution.
+
+    ``None`` is not a lost company. It hands the comment to SPEC §8 step 2, which resolves it by
+    name within its metro — the fallback :func:`extract_domain`'s own docstring describes. What a
+    missing host produces is worse than a missing row: the *wrong* row, because every company
+    posting through that platform is keyed on the platform's domain and merged into one.
+
+    The cases below the divider are shaped on comments actually stored in the live database, and
+    they are here because this parametrize previously exercised only hosts that were already in
+    the list — so it could not fail on one that was absent, which is exactly how nine of them
+    stayed absent until the archive was read at once.
+    """
     options = connector_options()
     assert extract_domain(text, options.ignore_link_hosts, options.strip_subdomains) == expected
 

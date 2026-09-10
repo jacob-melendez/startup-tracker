@@ -144,8 +144,17 @@ class HnHiringOptions(BaseModel):
     #: comment whose only link is ``app.deel.com/job-boards/…`` has no domain, and the company
     #: is then resolved by name within the metro (SPEC §8 step 2) instead of being keyed on
     #: somebody else's site.
+    #:
+    #: An omission here is not a missing row, it is a *wrong* one: writes are upserts keyed on the
+    #: normalised domain (SPEC §8 step 1), so every comment whose only link points at an unlisted
+    #: shared host collapses into one company row carrying somebody else's name, jobs and
+    #: published address. Reading one thread a month made that rare enough to miss; reading the
+    #: archive at once did not. Measured over the stored comments on 2026-09-09, one row had
+    #: swallowed 14 different companies through a job marketplace, one 8 through an ATS, one 5
+    #: through a recruiting site, and four more 2 or 3 each through a shortener, a form host, a
+    #: preprint server and a product-launch page — which is how the rows below were chosen.
     ignore_link_hosts: tuple[str, ...] = (
-        # Applicant tracking systems and their short-link hosts.
+        # Applicant tracking systems, job marketplaces and their short-link hosts.
         "greenhouse.io",
         "grnh.se",
         "lever.co",
@@ -164,6 +173,11 @@ class HnHiringOptions(BaseModel):
         "pinpointhq.com",
         "jobs.gem.com",
         "workatastartup.com",
+        "dover.com",
+        "uctalent.io",
+        # A marketplace SPEC §4 excludes as a source of its own; a link to it is a link to a
+        # profile page, never to the company's site.
+        "wellfound.com",
         # Documents, forms and scheduling.
         "notion.so",
         "notion.site",
@@ -171,6 +185,14 @@ class HnHiringOptions(BaseModel):
         "forms.gle",
         "airtable.com",
         "calendly.com",
+        "tally.so",
+        # Shorteners and per-tenant page hosts: the host belongs to the platform, and the label
+        # in front of it (``joulent.github.io``) is not a domain the company can be keyed on
+        # either — a second comment from the same company links its real site and makes a second
+        # row, which is the milder half of the same mistake.
+        "bit.ly",
+        "lnkd.in",
+        "github.io",
         # Social and community.
         "linkedin.com",
         "twitter.com",
@@ -182,6 +204,8 @@ class HnHiringOptions(BaseModel):
         "t.me",
         "news.ycombinator.com",
         "ycombinator.com",
+        "producthunt.com",
+        "arxiv.org",
         # Press: a poster linking their funding coverage is not linking their own site.
         "techcrunch.com",
         "mercurynews.com",
