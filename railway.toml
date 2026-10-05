@@ -1,0 +1,45 @@
+# Railway deployment (SPEC §12 Phase 9).
+#
+# Two services off this one repository, both built from the Dockerfile, plus Railway's own
+# Postgres 16 — the same three parts docker-compose.yml runs locally (db, app, scheduler), which
+# is why no new code was needed to deploy: only a start command, a port to bind and a password.
+#
+# This file configures the WEB service. The scheduler is a second service created in the Railway
+# UI from the same repo with its start command overridden to `python scheduler.py` — Railway
+# takes one railway.toml per repo, so the second service's one setting lives in its dashboard
+# rather than here. The README's deployment section walks both.
+#
+# Variables both services need (set them on each; Railway does not share them automatically):
+#   DATABASE_URL   from the Postgres service, rewritten to postgresql+asyncpg:// — Railway hands
+#                  out a postgresql:// URL and settings.py refuses anything else (SPEC §3).
+#   CONTACT_EMAIL  the address SEC EDGAR's fair-access policy requires in the User-Agent (§4).
+#   WEB_PASSWORD   web service only. Without it the deployment is wide open: this app has no
+#                  accounts (SPEC §1), so that one secret is the whole of its access control,
+#                  and what is behind it is private notes plus several hundred addresses other
+#                  people published for hiring contact, not for redistribution.
+#   LOG_JSON=true  structured lines, which is what Railway's log viewer can actually filter.
+
+[build]
+builder = "dockerfile"
+
+[deploy]
+# Once per deployment, before either service starts, so the two cannot race each other applying
+# the same migration. Alembic owns every table in this project (SPEC §3, CLAUDE.md).
+preDeployCommand = "alembic upgrade head"
+
+# Railway polls this until it answers before routing traffic to a new deployment. It is exempt
+# from the password (`web.auth.PUBLIC_PATHS`) because a health check cannot carry credentials
+# and a 401 here reads as a dead container — it would roll back a working deploy. Safe: it
+# returns a constant and touches no table.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+
+# A connector run can be mid-fetch when a deploy replaces the container. `scheduler.py` answers
+# SIGTERM by pausing the schedule and draining the run, because killing it leaves the fetch_runs
+# row stuck at status='error' with a NULL finished_at and /runs then shows it running for ever.
+# Same reasoning as the launchd agent's ExitTimeOut; see the README.
+#
+# Note this applies to whichever service reads this file. The scheduler service needs the same
+# value set in its own dashboard — it is the one that actually has a run to drain.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -14,6 +14,8 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASYNC_POSTGRES_SCHEME = "postgresql+asyncpg://"
+#: Short enough not to be a nuisance, long enough that the lock is not decorative.
+MIN_WEB_PASSWORD_LENGTH = 12
 APP_NAME = "startup-tracker"
 APP_VERSION = "0.1"
 # SEC's WAF wants "<name> <email>" with a real domain; "dev@localhost" is rejected (ingest/http.py).
@@ -41,6 +43,32 @@ class Settings(BaseSettings):
         description="Directory for the ETag/Last-Modified response cache (SPEC §4, 24 h).",
     )
     http_timeout_seconds: float = Field(default=30.0, gt=0)
+    web_password: str | None = Field(
+        default=None,
+        description=(
+            "When set, every page asks for it over HTTP Basic (SPEC §12 Phase 9). Unset means "
+            "no prompt, which is right for the loopback-bound local run and wrong for anything "
+            "with a public URL: the app has no accounts (SPEC §1), so this one shared secret is "
+            "the whole of its access control."
+        ),
+    )
+
+    @field_validator("web_password")
+    @classmethod
+    def _non_trivial(cls, value: str | None) -> str | None:
+        """``WEB_PASSWORD=`` means unset; a short one is refused rather than quietly accepted.
+
+        A deployment either has no password or has one worth having. Accepting ``WEB_PASSWORD=x``
+        would put a lock on the door that announces it is a lock and opens to a guess, which is
+        worse than none because it reads as protection in the deployment checklist.
+        """
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if len(value) < MIN_WEB_PASSWORD_LENGTH:
+            msg = f"WEB_PASSWORD must be at least {MIN_WEB_PASSWORD_LENGTH} characters"
+            raise ValueError(msg)
+        return value
 
     @property
     def user_agent(self) -> str:

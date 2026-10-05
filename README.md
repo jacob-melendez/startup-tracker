@@ -1149,6 +1149,89 @@ move and the measurement says it is the wrong one: crawling more careers pages y
 — all 9 of the addresses it has found are a shared inbox, against 305 of 437 from the thread that
 are not. Leave that connector to what it is good at, which is careers pages and ATS tokens.
 
+## Deploying
+
+Everything above runs the tool on one machine. This runs it somewhere you can reach from a
+phone, which is most of the point — the companies worth writing to turn up between classes, not
+at a desk.
+
+**Read this first.** There are no accounts (SPEC §1) and there never were, because for a local
+tool the machine *was* the access control. A URL removes that, and what is behind it is your own
+tracking notes and ratings, plus a browsable directory of several hundred email addresses that
+companies published so people could contact them about jobs — not so they could be republished
+in bulk. So `WEB_PASSWORD` is not optional on a deployment. Set it to something real; the app
+refuses anything under 12 characters at startup rather than pretending a short one is a lock.
+
+Three parts, the same three `docker-compose.yml` runs locally:
+
+| local | Railway |
+|---|---|
+| the `db` service | a Postgres database |
+| the `app` service | a web service, built from the `Dockerfile` |
+| the `scheduler` service | a second service off the same repo, start command `python scheduler.py` |
+
+```sh
+railway init                      # from the repo root; creates the project
+railway add --database postgres   # Postgres 16, which is what SPEC §3 requires
+railway up                        # builds the Dockerfile and deploys the web service
+```
+
+Then, on the **web** service, set these (Railway's dashboard, or `railway variables --set`):
+
+| variable | value |
+|---|---|
+| `DATABASE_URL` | the Postgres service's URL **with `postgresql://` rewritten to `postgresql+asyncpg://`** — `settings.py` refuses any other scheme (SPEC §3), and Railway hands out the bare one |
+| `WEB_PASSWORD` | your password, 12 characters or more |
+| `CONTACT_EMAIL` | the address SEC EDGAR's fair-access policy requires in the User-Agent (SPEC §4) |
+| `LOG_JSON` | `true` — Railway's log viewer can filter structured lines and cannot filter prose |
+
+Then add the **scheduler**: a second service from the same repo, the same four variables except
+`WEB_PASSWORD` (it serves nothing), and its start command overridden to `python scheduler.py`.
+Railway reads one `railway.toml` per repo, which is why that one setting lives in its dashboard
+rather than in the file.
+
+What `railway.toml` already handles: the build (the `Dockerfile`), `alembic upgrade head` as a
+pre-deploy step so the two services cannot race each other applying the same migration, and
+`/healthz` as the health check. That endpoint is deliberately exempt from the password
+(`web.auth.PUBLIC_PATHS`) — a health check cannot carry credentials, and a 401 there reads to
+the platform as a dead container and would roll back a *working* deploy. It discloses nothing:
+a constant, and no database round trip.
+
+The first deploy starts with an empty database. Seed and fill it the same way as locally, with
+`railway run` so the commands see the deployed `DATABASE_URL`:
+
+```sh
+railway run python cli.py seed
+railway run python cli.py refresh --all
+```
+
+Two things worth knowing before you leave it running:
+
+- **The scheduler is a long-lived process, not a cron job.** Railway restarts it on deploy, and
+  `scheduler.py` answers `SIGTERM` by pausing the schedule and draining the connector run in
+  flight — killing it mid-run leaves that run's `fetch_runs` row stuck at `status='error'` with a
+  NULL `finished_at`, which `/runs` then shows as running for ever. Deploying during a
+  `sec_edgar` backfill is the one case where that still happens; see
+  [Troubleshooting](#troubleshooting-connector-failures) for how to clear the row.
+- **A deployed instance is still one reader's tool.** The note, rating and bookmark forms write
+  to a single shared row per company (SPEC §5) — there is no "whose note is this", so anyone you
+  give the password to is editing the same notes you are.
+
+### Supabase instead of Railway Postgres
+
+Works, with one trap worth naming. Supabase's pooled connection (port 6543) runs pgbouncer in
+transaction mode, which does not support the prepared statements asyncpg creates by default, so
+the app fails on its first query with a `DuplicatePreparedStatementError`. Either use the direct
+connection (port 5432, fewer available connections) or disable the cache in the URL:
+
+```
+postgresql+asyncpg://...@...:6543/postgres?prepared_statement_cache_size=0
+```
+
+`pg_trgm` is available but not enabled by default — `CREATE EXTENSION pg_trgm;` in the SQL
+editor before the first migration, since Alembic's first revision expects to create it as the
+database owner (SPEC §5, §8).
+
 ## Development
 
 ```sh

@@ -1,79 +1,152 @@
-/* Startup Tracker — the whole stylesheet (SPEC §9: "Deliberately plain styling").
-   Hand-written: no framework, no build step, no imported or remotely hosted fonts. A dense
-   information tool for one reader, so the budget goes to legibility at 3,000+ rows rather than
-   to decoration — tight vertical rhythm, hairline rules instead of boxes, metadata that reads
-   as metadata. Every rule is written against the tokens, so dark mode is one override block
-   rather than a second stylesheet. Declarations are packed onto shared lines to stay inside
-   the 200-line budget CLAUDE.md sets for this file. */
+/* Startup Tracker — the whole stylesheet (SPEC §9, restyled by §12 Phase 9).
+   Hand-written: no framework, no build step, no imported or remotely hosted fonts. Phase 9
+   raised the budget from 200 lines to 400 and spent the difference on type and air rather than
+   on decoration: a warm paper ground, a serif for the things you read (company and role names)
+   against a sans for the chrome you operate, uppercase micro-labels for anything that is a
+   column heading rather than content, and hairlines where a lesser design would put a box.
+
+   The serif is a *system* stack, like the sans — SPEC §3 says system fonts and CLAUDE.md
+   forbids a CDN, and a downloaded face would be a build step by another name. `ui-serif` picks
+   up whatever the platform's own serif is, and the named fallbacks cover the rest. (Apple's
+   is named for a city `config/regions.yaml` configures, so it cannot be written here — the
+   literal guard in `tests/test_regions.py` caught this very comment.)
+
+   Still one reader looking at thousands of rows, so density is not sacrificed for the sake of
+   it: the row rhythm is loosened, not abandoned, and every rule is written against the tokens
+   so dark mode stays one override block rather than a second stylesheet. */
 
 :root {
   color-scheme: light dark;
-  --bg: #fff; --fg: #16181d; --muted: #667080;
-  --line: #dee2e8;    /* hairline rules; nothing in here gets a full border */
-  --raised: #f4f6f8;  /* chips, filter bar, table headers, the open row */
-  --accent: #10527f;
-  --match: #a8420a; --match-bg: #fff3e6;  /* filter hits — never signalled by colour alone */
+
+  /* Warm paper rather than #fff: the list is long and a pure-white ground makes a page this
+     dense glare. --surface is the slightly lighter plane that inputs and raised controls sit
+     on, so a control reads as something you touch without needing a heavy border. */
+  --bg: #f7f5f0;
+  --surface: #fffdf8;
+  --fg: #1b1a17;
+  --muted: #76736a;
+  --line: #e3ded2;      /* hairline rules; nothing in here gets a full border */
+  --raised: #efebe0;    /* chips, table headers, the open row */
+  --accent: #2c62cf;
+  --accent-ink: #fffdf8;
+  --match: #a8420a; --match-bg: #fdf0e2;  /* filter hits — never signalled by colour alone */
   --ok: #1c7a3c; --warn: #8a6000; --err: #b3261e;
+
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
+  --serif: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Times New Roman", serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 10px;       /* inputs, panels, anything rectangular */
+  --pill: 999px;        /* buttons and chips, which are pills in this design */
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15171b; --fg: #e5e8ec; --muted: #949ead; --line: #2b3038; --raised: #1d2027;
-    --accent: #7ab8e6; --match: #ffab5e; --match-bg: #3a2a16;
+    --bg: #16150f; --surface: #1e1d17; --fg: #ece9e1; --muted: #9a968a;
+    --line: #2f2d25; --raised: #23211a;
+    --accent: #89b0f7; --accent-ink: #14130e;
+    --match: #ffab5e; --match-bg: #3a2a16;
     --ok: #5fbe85; --warn: #d6ab48; --err: #ef827b;
   }
 }
 
-body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* The one typographic rule the whole design rests on: anything that is a *label for a column
+   or a section* is small, uppercase and widely tracked, and anything that is *content* is not.
+   `.eyebrow` is the shared implementation; the selectors below opt into it rather than
+   repeating the four declarations. */
+.eyebrow, .field label, .panel-section > h2, table.roles th, table.funding th, .runs th {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); }
 
 /* Layout -------------------------------------------------------------------------------- */
 
-.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px 72px; }
 /* The same max-width and side padding as .wrap: the topbar sits outside it in the markup, so
    without this the brand hangs off the left of everything below it on a wide screen. */
-.topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px;
-  max-width: 1120px; margin: 0 auto 14px; padding: 12px 16px;
+.topbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px;
+  max-width: 1120px; margin: 0 auto 28px; padding: 20px 24px 16px;
   border-bottom: 1px solid var(--line); }
-.brand { margin-right: auto; font-weight: 700; }
-.nav-link { margin-left: 14px; color: var(--muted); text-decoration: none; }
-.nav-link.active { color: var(--fg); font-weight: 600; text-decoration: underline; }
+.brand { margin-right: auto; font-family: var(--serif); font-size: 19px; font-weight: 600;
+  letter-spacing: -0.01em; }
+.nav-link { margin-left: 18px; color: var(--muted); text-decoration: none; }
+.nav-link:hover { color: var(--fg); }
+.nav-link.active { color: var(--fg); font-weight: 600; text-decoration: underline;
+  text-underline-offset: 5px; }
+
+h1 { font-family: var(--serif); font-size: 32px; font-weight: 600; letter-spacing: -0.02em;
+  margin: 0 0 20px; }
+
+/* Filters ------------------------------------------------------------------------------- */
 
 /* The filter row wrapping with flexbox is the entire responsive story — no breakpoints. Items
    are top-aligned: the multi-selects are four rows tall, and bottom-aligning the row would
    strand the search box halfway down it. */
-.filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 14px;
-  padding: 10px 12px; margin-bottom: 12px; background: var(--raised); border-radius: 6px; }
-.field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.field label { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--muted); }
+.filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px;
+  padding: 16px 18px; margin-bottom: 26px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .field input, .field select, .note-form textarea { font: inherit; max-width: 220px;
-  padding: 3px 5px; color: var(--fg); background: var(--bg);
-  border: 1px solid var(--line); border-radius: 4px; }
+  padding: 7px 10px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; }
+/* A multi-select sizes itself from its `size` attribute, and the roomier padding above turns
+   four rows into a box half the viewport tall — the filter row then buries the results it
+   exists to narrow. Pinning the height puts the padding back on the horizontal axis only, and
+   the list still scrolls to every option. */
+.field select[multiple] { height: 5.4em; padding: 4px 6px; }
+.field input:hover, .field select:hover { border-color: var(--muted); }
+/* A checkbox's label is a sentence, not a column heading, so it opts back out of `.eyebrow`. */
+.field label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 7px;
+  font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--fg); }
 /* The sector facet alone runs to hundreds of options; the shared 220px cap clips its longest
    names, so that one field opts into a wider box rather than every field growing. */
 .field.wide select { max-width: 320px; }
 /* The City select groups its options by metro (SPEC §12 Phase 7). Browsers render an <optgroup>
    label in bold italic, which reads louder than the options it heads; this makes it a quiet
-   heading and puts the options back to normal weight, since an option inherits from its group.
-   The size is left alone deliberately — a smaller label breaks the list's line rhythm. */
+   heading and puts the options back to normal weight, since an option inherits from its group. */
 .field optgroup { font-style: normal; font-weight: 600; color: var(--muted); }
 .field optgroup option { font-weight: 400; color: var(--fg); }
-.actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.actions { display: flex; align-items: center; gap: 14px; margin-left: auto;
+  align-self: flex-end; }
 /* The expanded row's own filter (SPEC §9 "filterable within the row") lays out like `.filters`
    but is deliberately not that class: it sits inside a panel, not above a page, so it stays
-   flat — no raised background, no radius — and a test selector for the page's filter form
-   cannot match it. */
-.roles-filter { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 14px;
-  margin: 0 0 8px; }
+   flat — no surface, no border — and a test selector for the page's filter form cannot match
+   it. */
+.roles-filter { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 16px;
+  margin: 0 0 14px; }
 
-/* Chips are metadata: no border, no hover, no pointer cursor — they must not read as buttons.
+/* Buttons ------------------------------------------------------------------------------- */
+
+/* One pill shape for every affordance, filled for the primary action and outlined for the
+   rest, so "this submits the form" is legible without reading the words. */
+button[type="submit"], .filters button { padding: 8px 18px; font: inherit; font-weight: 600;
+  color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent);
+  border-radius: var(--pill); cursor: pointer; }
+button[type="submit"]:hover, .filters button:hover { filter: brightness(1.08); }
+/* §6's "Find people →" has to be a button that is an <a>: there is no bespoke JavaScript here,
+   so it borrows the outlined pill at inline size rather than being a <button>. */
+a.button { display: inline-block; padding: 4px 14px; font-size: 13px; font-weight: 600;
+  color: var(--fg); text-decoration: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--pill); }
+a.button:hover { border-color: var(--muted); background: var(--raised); }
+.load-more { display: block; margin: 28px auto; padding: 10px 28px; font: inherit;
+  font-weight: 600; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--pill); cursor: pointer; }
+.load-more:hover { border-color: var(--muted); background: var(--raised); }
+
+/* Chips and badges ----------------------------------------------------------------------
+   Chips are metadata: no border, no hover, no pointer cursor — they must not read as buttons.
    Badges assert something about the row they sit in, so they get an outline and more weight. */
-.chip { display: inline-block; padding: 1px 7px; margin: 0 4px 2px 0; font-size: 11.5px;
-  white-space: nowrap; color: var(--muted); background: var(--raised); border-radius: 9px; }
+
+.chip { display: inline-block; padding: 2px 10px; margin: 0 5px 3px 0; font-size: 12px;
+  white-space: nowrap; color: var(--muted); background: var(--raised);
+  border-radius: var(--pill); }
 .chip.sector { color: var(--fg); }
 /* Outlined pill against the sector chip's filled one: the two kinds sit side by side and can
    read the same ("Hardware" the sector, "Hardware 1" the family), so shape — not colour
@@ -84,8 +157,9 @@ a { color: var(--accent); }
    reader and on a monochrome screen. */
 .chip.family.match { font-weight: 700; color: var(--match); background: var(--match-bg);
   outline: 1px solid currentcolor; box-shadow: none; }
-.badge { display: inline-block; padding: 0 5px; font-size: 11px; font-weight: 600;
-  white-space: nowrap; border: 1px solid currentcolor; border-radius: 3px; }
+.badge { display: inline-block; padding: 1px 8px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.02em; white-space: nowrap;
+  border: 1px solid currentcolor; border-radius: var(--pill); }
 .badge.flexible { color: var(--accent); }
 .badge.remote, .badge.published { color: var(--ok); }
 /* Dashed = we constructed this link; the company never published it (SPEC §6). The border
@@ -99,41 +173,56 @@ a { color: var(--accent); }
 
 .companies { border-top: 1px solid var(--line); }
 .company, .company-details { border-bottom: 1px solid var(--line); }
-.companies summary { padding: 6px 4px; cursor: pointer; }
-.companies summary:hover, .companies details[open] > summary { background: var(--raised); }
+.companies summary { padding: 18px 10px; cursor: pointer; }
+.companies summary:hover, .companies details[open] > summary { background: var(--surface); }
 /* `inline`, not `inline-block`: an inline-block wide enough to wrap is pushed below the native
    disclosure triangle, orphaning it on a line of its own. Inline text flows around it. */
-.summary-main { display: inline; font-weight: 600; }
-.summary-main .muted { font-weight: 400; }  /* the one-liner is not part of the name */
+.summary-main { display: inline; font-family: var(--serif); font-size: 24px; font-weight: 600;
+  letter-spacing: -0.015em; }
+/* The company name is a link, but it is also the headline of its row, so it takes the ink
+   colour and earns its underline on hover. Blue is reserved for the things you *do* — the
+   submit button, the draft-an-email door — which is what makes those read as actions at a
+   glance on a page that is otherwise all text. */
+.summary-main a { color: inherit; text-decoration: none; }
+.summary-main a:hover { text-decoration: underline; text-underline-offset: 4px; }
+/* The native disclosure triangle is the only thing saying this row opens, so it stays — but
+   quietly, at the weight of metadata rather than of the name it sits beside. */
+.companies summary::marker { color: var(--muted); font-size: 0.8em; }
+
+/* The one-liner is not part of the name, so it drops back to the body sans at body size —
+   the size change alone is what separates the two without punctuation between them. */
+.summary-main .muted { font-family: var(--sans); font-size: 14px; font-weight: 400; }
 /* Flex, so the metadata pieces are separated by a real gap rather than by whatever whitespace
    survived the template — "<city> Series A $15M 3 open" has to read as four facts. */
-.summary-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 9px;
-  margin-top: 1px; font-size: 12px; color: var(--muted); }
+.summary-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 14px;
+  margin-top: 7px; font-size: 13px; color: var(--muted); }
 .count { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* The expanded panel is deliberately subordinate to its summary — indented behind a left
    rule, so the eye can still scan the collapsed rows straight down the left edge. */
-.panel { padding: 2px 0 12px 14px; margin: 0 0 8px 6px; border-left: 2px solid var(--line); }
-.panel-section { margin-top: 12px; }
+.panel { padding: 4px 0 24px 22px; margin: 0 0 10px 10px;
+  border-left: 2px solid var(--line); }
+.panel-section { margin-top: 26px; }
+/* Prose only — a company thesis runs to a paragraph, and at the full 1,120px wrap that is a
+   130-character measure the eye loses its place on. Tables, chip rows and the roles table are
+   data and still want every pixel, so this is deliberately `> p` and not the section. */
+.panel-section > p { max-width: 72ch; }
 /* h2, because the panel is a page in its own right on /company/{id}: <h1> is the company name
-   and the seven section headings sit under it. They read as labels, not as headlines. */
-.panel-section > h2 { margin: 0 0 4px; font-size: 11px; font-weight: 600;
-  letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
-.panel-section > h1 { margin: 0 0 2px; font-size: 20px; }
+   and the sections sit under it. They read as labels, not as headlines — see `.eyebrow`. */
+.panel-section > h2 { margin: 0 0 10px; }
+.panel-section > h1 { margin: 0 0 4px; font-family: var(--serif); font-size: 28px;
+  font-weight: 600; letter-spacing: -0.02em; }
 /* Contacts (SPEC §6): published and constructed are two lists under two headings, so the split
    survives greyscale and a screen reader, not only the badge's colour. Ordinary case, unlike
    the section's uppercase h2, so the sub-heading never outweighs the heading above it. */
-.contact-group { margin: 8px 0 1px; font-size: 12px; font-weight: 600; }
-.contacts { margin: 0; padding-left: 18px; }
-/* §6's "Find people →" has to be a button that is an <a>: there is no bespoke JavaScript here,
-   so it borrows .load-more's affordance at inline size rather than being a <button>. */
-a.button { display: inline-block; padding: 0 8px; text-decoration: none;
-  border: 1px solid var(--line); border-radius: 4px; }
-a.button:hover { background: var(--raised); }
+.contact-group { margin: 16px 0 4px; font-size: 13px; font-weight: 600; }
+.contacts { margin: 0; padding-left: 20px; }
+.contacts li { margin-bottom: 7px; }
 /* The drafted note (SPEC §12 Phase 8) is a real <textarea> — with no JavaScript of our own there
    is nothing here to copy it for you — sized to show all 300 characters without scrolling. */
-.draft textarea { width: 100%; max-width: 46em; padding: 3px 5px; font: inherit; color: var(--fg);
-  background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.draft textarea { width: 100%; max-width: 46em; padding: 10px 12px; font: inherit;
+  color: var(--fg); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; }
 
 /* Tables: hairline row rules only, never a border per cell. A wide table scrolls inside its
    own wrapper so the page itself never scrolls sideways. */
@@ -141,15 +230,14 @@ a.button:hover { background: var(--raised); }
    spans in the table headers, which are absolutely positioned. Without it they escape the
    overflow, sit at the *unclipped* table's width, and make the whole page scroll sideways. */
 .table-wrap { position: relative; overflow-x: auto; }
-table.roles, table.funding, .runs { width: 100%; font-size: 13px; border-collapse: collapse; }
-table.roles th, table.funding th, .runs th { font-size: 11px; font-weight: 600;
-  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+table.roles, table.funding, .runs { width: 100%; font-size: 14px; border-collapse: collapse; }
+table.roles th, table.funding th, .runs th { padding-bottom: 10px; }
 table.roles th, table.roles td, table.funding th, table.funding td, .runs th, .runs td {
-  padding: 4px 12px 4px 0; text-align: left; vertical-align: top;
+  padding: 11px 18px 11px 0; text-align: left; vertical-align: top;
   border-bottom: 1px solid var(--line); }
 /* The connector-health rows are <div>s, not table rows: one wrapping line per connector. */
-.run-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px;
-  padding: 3px 6px; border-bottom: 1px solid var(--line); }
+.run-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px;
+  padding: 11px 12px; border-bottom: 1px solid var(--line); }
 /* Three cues at once — tint, weight and a left bar — so "this row matched the filter" and
    "this connector is stale" both survive colour-blindness. */
 tr.match, .run-row.stale { font-weight: 600; background: var(--match-bg); }
@@ -159,10 +247,10 @@ tr.match > td:first-child, .run-row.stale { box-shadow: inset 3px 0 0 var(--matc
    "Failing" in the row is what carries it without colour; .alert is the banner above the list. */
 .run-row.failing { font-weight: 600; box-shadow: inset 3px 0 0 var(--err); }
 .run-row .fail { color: var(--err); }
-.alert { margin: 0 0 10px; padding: 6px 10px; background: var(--match-bg);
-  box-shadow: inset 3px 0 0 var(--err); border-radius: 4px; }
+.alert { margin: 0 0 18px; padding: 12px 16px; background: var(--match-bg);
+  box-shadow: inset 3px 0 0 var(--err); border-radius: 8px; }
 .runs code { font-family: var(--mono); }
-.runs pre { max-width: 70ch; margin: 0; font: 12px/1.4 var(--mono); white-space: pre-wrap; }
+.runs pre { max-width: 70ch; margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; }
 .status.ok, .status.partial, .status.error { font-family: var(--mono); font-weight: 600; }
 .status.ok { color: var(--ok); }
 .status.partial { color: var(--warn); }
@@ -170,29 +258,39 @@ tr.match > td:first-child, .run-row.stale { box-shadow: inset 3px 0 0 var(--matc
 
 /* Controls ------------------------------------------------------------------------------ */
 
-.load-more { display: block; width: 100%; margin: 14px 0; padding: 8px; font: inherit;
-  color: var(--accent); background: var(--bg); border: 1px dashed var(--line);
-  border-radius: 5px; cursor: pointer; }
-.load-more:hover { background: var(--raised); }
 /* htmx puts .htmx-request on the indicator element for the life of the request. `visibility`
    rather than `display` so revealing the spinner never reflows the row it sits in. */
-.htmx-indicator { visibility: hidden; font-size: 12px; color: var(--muted); }
+.htmx-indicator { visibility: hidden; font-size: 13px; color: var(--muted); }
 .htmx-indicator.htmx-request { visibility: visible; }
-.star { padding: 0 4px; font-size: 15px; line-height: 1; color: var(--muted);
+.star { padding: 0 5px; font-size: 17px; line-height: 1; color: var(--muted);
   background: none; border: 0; cursor: pointer; }
 .star.on { color: var(--warn); }
-.note-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.note-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
 /* Width, not `flex`: the textarea's parent is a `.field`, which is a *column* flex container,
-   so a flex-basis here would be read as a 280px-tall box and shove the other controls down. */
-.note-form textarea { width: 320px; max-width: 100%; min-height: 3.4em; }
+   so a flex-basis here would be read as a 320px-tall box and shove the other controls down. */
+.note-form textarea { width: 320px; max-width: 100%; min-height: 4em; }
 .rating { font-variant-numeric: tabular-nums; }
-.status-pill { display: inline-block; padding: 0 7px; font-size: 11px;
-  background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
+.status-pill { display: inline-block; padding: 2px 11px; font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.02em; background: var(--raised); border: 1px solid var(--line);
+  border-radius: var(--pill); }
 
 /* States -------------------------------------------------------------------------------- */
 
 .muted { color: var(--muted); }
-.empty { padding: 28px 4px; text-align: center; color: var(--muted); }
-.error-page { padding: 40px 0; }
+.empty { padding: 72px 8px; text-align: center; font-family: var(--serif); font-size: 17px;
+  color: var(--muted); }
+.error-page { padding: 72px 0; }
+.error-page h1 { font-size: 56px; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; white-space: nowrap; border: 0; clip-path: inset(50%); }
+
+/* Narrow screens: the filter row is already fluid, but the generous page padding and the
+   display sizes are not, and on a phone they cost more than they buy. */
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px 48px; }
+  .topbar { padding: 14px 16px 12px; }
+  h1 { font-size: 26px; }
+  .summary-main { font-size: 20px; }
+  .companies summary { padding: 14px 4px; }
+  .panel { padding-left: 14px; margin-left: 4px; }
+}

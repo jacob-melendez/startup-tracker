@@ -14,7 +14,9 @@ A locally-run web app that maintains a daily-refreshed database of Bay Area star
 
 **Region scope for v1:** San Francisco, Palo Alto, Mountain View, Menlo Park, Redwood City, Santa Clara, Sunnyvale, San Mateo, San Jose, Berkeley, Oakland, Cupertino, Los Altos, Foster City, South San Francisco, Burlingame, Fremont, Emeryville.
 
-**Explicit non-goals for v1:** user accounts, multi-tenancy, public deployment, mobile app, email notifications, any paid data API.
+**Explicit non-goals for v1:** user accounts, multi-tenancy, mobile app, email notifications, any paid data API.
+
+**Deployment (amended by §12 Phase 9).** Public deployment was a v1 non-goal and is no longer one: the tool is more useful reachable from a phone between classes than from one laptop. What the non-goal was protecting still holds, so it is carried by one rule instead — a single shared password over HTTP Basic (`WEB_PASSWORD`), because there are still no accounts and what a URL exposes is the user's own tracking notes plus several hundred addresses companies published for hiring contact, not for redistribution.
 
 ---
 
@@ -42,7 +44,7 @@ A `--now` flag on the CLI allows an on-demand refresh of a single connector for 
 | Migrations | **Alembic**, autogenerate + reviewed by hand | |
 | Web framework | FastAPI | |
 | Templating | Jinja2 + **HTMX** | Server-rendered. HTMX gives live filtering and expandable rows with no build step and no JS framework |
-| CSS | One hand-written `styles.css`, ~200 lines, system font stack | No Tailwind, no component library, no build pipeline |
+| CSS | One hand-written `styles.css`, ~400 lines, system font stack | No Tailwind, no component library, no build pipeline |
 | Validation / settings | Pydantic v2 + `pydantic-settings` | |
 | HTTP client | `httpx` (async) with `tenacity` for retries | |
 | HTML parsing | `selectolax` | |
@@ -476,6 +478,10 @@ Build in this order. Each phase ends with a working, committed, testable state. 
 ### Phase 8 — Outreach
 
 > Turn the job board into an outreach tool: one part-time posting in 1,682 open roles is not a gap in the data — startups create part-time work for the person who asks, they do not advertise it. Move the contacts block of §9's expanded row above the open-roles table — reaching a human is the point, and the roles are now evidence of budget and unmet need rather than things to apply to — and give every company the best available door. A published email becomes the row's primary action: a `mailto:` built server-side from a subject and body drafted in a new `config/outreach.yaml`, loaded like every other config file, with the address itself still shown beside it and a role inbox (`info`, `jobs`, `support`) quietly marked as one rather than hidden, per §7.1. Only 31 of 9,220 companies have an address, so the LinkedIn door is the main path and gets the design attention, in three tiers: a stored profile URL links straight to the person; a named person without one gets §6's people search scoped to their name and the company; nobody named falls back to today's company-wide "Find people →", now saying who to look for. Ask for a founder first, then exec, eng lead, recruiter last — these companies are too small to have a talent function, and only a founder can invent a role that does not exist. That order, the pitch itself, and the legal-entity markers that stop an EDGAR Form D filer being offered as a person all live in `config/outreach.yaml`; every door carries a pasteable draft within LinkedIn's 300-character cap on a connection note, enforced when the config loads so an unpastable template fails on startup rather than at render time. Nothing here fetches LinkedIn — the search links are the constructed ones §6 already prescribes and a draft you paste yourself is not automation, so §4 stands untouched. Add §9's has-a-published-email filter as an `EXISTS` arm in `db/queries.py`, since a join to a many-per-company table would duplicate rows and break the keyset order, and wire it into both `/` and `/roles`. Then raise `hn_hiring`'s per-run thread cap so it reads years of monthly threads instead of one: that thread is where founders publish their own addresses, and it is what takes the emailable population from 31 into the low hundreds. Do not raise `company_site`'s per-run cap chasing the same end — it yields role inboxes.
+
+### Phase 9 — Presentation and deployment
+
+> Two things, and the second is why the first matters. Restyle the front end: the tool is read for an hour at a time and looked at daily, so give it a warm paper ground instead of white, a system *serif* for the things you read — company names, role names, page headings — against the sans for the chrome you operate, one small uppercase letterspaced treatment for anything that is a column or section label, pill-shaped controls, hairlines where a box would be heavier, and the vertical air a list of 10,000 rows needs to stay scannable. Blue is reserved for the things you *do*, so an action reads as one at a glance on a page that is otherwise all text. The §3 budget rises from ~200 lines to ~400 to pay for it; the number was never the point, only that this file stays one hand-written stylesheet with no framework, no build step and no downloaded or CDN-hosted face — which the serif honours by being a system stack like the sans. Then make it deployable, which §1 now permits: a start command binding the platform's `$PORT` on `0.0.0.0`, migrations as a once-per-deployment step rather than a race between replicas, a `railway.toml` for the web service with the scheduler as a second service off the same repo, and `/healthz` exempted from the password so a health check cannot roll back a working deploy. The password is the whole of the access control, because §1 still rules out accounts: one shared secret in `WEB_PASSWORD`, compared in constant time, refused if it is trivial, and absent locally where the loopback binding already does that job. Deployed, this app serves private tracking notes and a directory of addresses published for hiring contact; it must not serve them to whoever finds the host.
 
 ---
 

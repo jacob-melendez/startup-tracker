@@ -14,7 +14,7 @@ Four claims, each of which is a checkbox in §13 rather than a unit of behaviour
   outbound call would raise. The company that cycle runs against carries a full SPEC §6
   contacts block, because that is where the app now holds ``linkedin.com`` URLs and §4 forbids
   ever fetching one: rendering a link to a page must stay a strictly local act.
-* **The stated front-end budget** (SPEC §9, CLAUDE.md): one hand-written stylesheet under 200
+* **The stated front-end budget** (SPEC §9, CLAUDE.md): one hand-written stylesheet under 400
   lines, no external origin in the page chrome, no JavaScript framework and no build step.
 * **"The company list renders in under 200 ms with 5,000 companies and 20,000 jobs."**
 
@@ -64,8 +64,10 @@ WEB = ROOT / "web"
 #: reads ``config/connectors.yaml`` off the local disk and is the only place a cadence lives.
 FORBIDDEN_IMPORTS = ("httpx", "ingest.http", "ingest.connectors", "ingest.seed")
 
-#: SPEC §9 / CLAUDE.md: "one hand-written ``web/static/styles.css`` (~200 lines)".
-MAX_STYLESHEET_LINES = 200
+#: SPEC §9 / CLAUDE.md: "one hand-written ``web/static/styles.css`` (~400 lines)". Raised from 200
+#: by SPEC §12 Phase 9, which spends the difference on type and spacing rather than on a framework:
+#: the point of the cap was never the number but that this file stays hand-written and readable.
+MAX_STYLESHEET_LINES = 400
 #: "Only small glue JS" — and only with a comment saying why htmx cannot do it.
 MAX_GLUE_JS_LINES = 20
 

@@ -48,6 +48,7 @@ from db.session import dispose_engine, get_session_factory
 from ingest.config import load_outreach_config
 from logging_config import configure_logging, get_logger
 from settings import get_settings
+from web.auth import BasicAuthMiddleware
 from web.routes import companies, roles, runs
 from web.templating import site_name, templates
 
@@ -108,6 +109,23 @@ def create_app(session_factory: async_sessionmaker[AsyncSession] | None = None) 
         redoc_url=None,
         openapi_url=None,
     )
+    # One shared password, when there is one (SPEC §12 Phase 9). Added before the routers so it
+    # wraps every page and every fragment, and read here rather than in the lifespan because
+    # middleware cannot be added to a running app — so a password set after the process started
+    # does not take effect until it restarts. Unset is the local default and leaves the stack
+    # exactly as it was; `web.auth` says why that is safe on loopback and not anywhere with a
+    # public URL.
+    #
+    # Keyed on `session_factory is None`, which is this module's existing stand-in for "this is
+    # the production instance" — the same condition the lifespan uses to decide whether it owns
+    # the engine. The alternative, reading settings unconditionally, would let a developer's own
+    # `.env` switch authentication on inside the test suite and 401 every web test, which is the
+    # leak `tests/test_cli.py` already guards the CLI against. The middleware itself is tested
+    # directly in `tests/test_web_auth.py` rather than through this branch.
+    password = get_settings().web_password if session_factory is None else None
+    if password is not None:
+        app.add_middleware(BasicAuthMiddleware, password=password)
+
     if session_factory is not None:
         # Also set outside the lifespan: httpx's ASGITransport does not run lifespan events, so
         # a test that drives the app directly would otherwise have no session factory at all.

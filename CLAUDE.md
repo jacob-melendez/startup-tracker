@@ -34,7 +34,8 @@ v1 non-goals (§1): user accounts, multi-tenancy, public deployment, mobile app,
 
 ### Web
 - Server-rendered Jinja2 + HTMX only. No JS framework, no build step, no Tailwind, no component library.
-  One hand-written `web/static/styles.css` (~200 lines, system font stack). Only small glue JS (§3, §9).
+  One hand-written `web/static/styles.css` (~400 lines, system font stack — the serif is a system
+  stack too, never a downloaded or CDN-hosted face). Only small glue JS (§3, §9, §12 Phase 9).
 - Default company sort is `latest_job_posted_at DESC NULLS LAST`; keyset pagination, 50 per page (§9).
 
 ### Config-driven behaviour — edit YAML, not Python
